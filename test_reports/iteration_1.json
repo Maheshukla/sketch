@@ -1,0 +1,44 @@
+{
+  "summary": "First test round for Sketch platform. Ran 29 backend integration tests covering auth (email+OTP), profiles, reels, products, cart/wishlist, full mock-payment checkout with escrow, seller shipping/delivery, complete custom-request workflow (submit→admin review→estimate→advance pay→start→deliver→complete), company mgmt, studio product/reel upload + admin moderation, admin overview/users, RBAC, support tickets, notifications, search. 28/29 passed (96.5%). One backend bug (500 on reel comment creation due to ObjectId serialization). Frontend smoke test: landing/auth pages load, login as customer works, discover/reels/marketplace/cart render, RBAC redirect works (customer→/admin redirects to /). data-testids present on auth form elements.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/reels/{reel_id}/comments", "issue": "Returns 500 — the comment dict returned still contains raw ObjectId in `user_id` (built with `oid(user['id'])` on line 603). FastAPI cannot JSON-serialize ObjectId. Backend log shows: TypeError: 'ObjectId' object is not iterable. Fix: convert to str, e.g. `\"user_id\": user[\"id\"]` (or run through `pub()` before returning).", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "CORS middleware", "issue": "server.py line 1398 sets allow_origins to FRONTEND_URL env or localhost:3000 — production preview domain (creator-studio-518.preview.emergentagent.com) may only work because the frontend and API share origin. If cross-origin needed, add explicit origin."},
+      {"endpoint": "POST /api/auth/login rate limit", "issue": "Every failed attempt resets locked_until to now+15m (line 148). So a legit user can be locked out for 15 min after just crossing the 5 threshold; also `locked_until` is only checked, never cleared after expiry via TTL — minor UX concern."},
+      {"endpoint": "GET /api/analytics/creator", "issue": "Fetches ALL orders (up to 10000) and builds order_map in memory — will not scale. Also `payment.ref_id` is stored as string while order lookup by _id would need ObjectId conversion; the current order_map keys on `str(o['_id'])` which does match, so functionally OK, but O(N) memory."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Reels page", "issues": ["When seed/uploaded reel has invalid media_url (e.g. 'http://x/img.png' or broken external URLs), only broken-image alt text renders on a black background — no fallback image or skeleton state. Consider a placeholder for failed media loads."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix POST /api/reels/{reel_id}/comments 500: return `pub(comment)` or convert `user_id` to str before returning (line 603-606 server.py).",
+    "Optionally: add graceful image error fallback in reels/product image components."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 1417 lines — starts pushing the 700-line guideline; consider splitting into routers per domain (auth, products, orders, custom_requests, admin).",
+    "Multiple endpoints return raw `comment`/`review`/`estimate` dicts with ObjectId fields inside instead of piping through `pub()` (see /reels/{id}/comments — already broken; /products/{id}/reviews and /custom-requests estimate work only because they were built with strings/uuids). Standardize on `pub()` for all responses.",
+    "GET /api/analytics/creator loads all orders and payments into memory (up to 10000 each). Add proper aggregation pipeline.",
+    "Login attempt lockout resets locked_until on EVERY failed attempt — user can never unlock via cooldown; only DB TTL/deletion clears it. Should only set locked_until once count>=5.",
+    "cr_creator_check uses `str(cr.get('target_id')) != user['id']` — target_id is a string stored in DB, works, but inconsistent with other collections that store ObjectId.",
+    "/api/upload has no MIME validation; accepts any binary up to 200MB. Consider whitelisting image/video content-types."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "96.5% (28/29)", "frontend": "smoke-pass on landing/auth/discover/reels/marketplace/cart/RBAC"},
+  "test_credentials": "All from /app/memory/test_credentials.md — all valid and working",
+  "seed_data_creation": "Test suite created a TEST_widget product and TEST_reel reel via meera and had admin approve them (both appear in discover). Also created OTP user (otp_test_*@example.com) and TEST_sup_*@x.com support account via super_admin. Multiple TEST_ prefixed items linger — cleanup not implemented.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend suite at /app/backend/tests/backend_test.py runs in ~9s with pytest-xdist. Only known failure is POST /api/reels/{id}/comments (ObjectId serialization). Frontend loads and integrates correctly with backend; auth cookies (httpOnly, secure, samesite=none) confirmed working across preview domain. Notifications badge, avatar, and role-based navigation render. RBAC: customer accessing /admin redirects to /. Seed data has been amended with TEST_ items — feel free to clean if needed.",
+  "rca_of_the_issue": "POST /api/reels/{reel_id}/comments (server.py:597-606) builds a comment dict with `user_id: oid(user['id'])` — an ObjectId — then returns it directly. FastAPI's default JSON encoder cannot serialize bson.ObjectId → 500. Reproduction: any authenticated POST with text body triggers it. Fix: either return through the `pub()` helper (which converts ObjectId→str) or build with `str(user['id'])` from the start."
+}

@@ -1,0 +1,125 @@
+{
+  "app_name": "Sketch",
+  "theme": "hybrid_dark_light",
+  "design_concept": "Premium Art Exhibition meets Modern Social Media. The UI steps back to let the art be the hero. Inspired by gallery walls, high-end editorial design, and seamless consumer commerce.",
+  "typography": {
+    "headings": {
+      "font_family": "Cabinet Grotesk, serif",
+      "weights": ["light", "regular", "bold", "black"],
+      "usage": "Use tight letter spacing (tracking-tighter) for large headings. Use for hero sections, artist names, and product titles.",
+      "sizes": {
+        "h1": "text-5xl sm:text-6xl tracking-tighter leading-none",
+        "h2": "text-3xl sm:text-4xl tracking-tight leading-tight",
+        "h3": "text-xl sm:text-2xl tracking-tight"
+      }
+    },
+    "body": {
+      "font_family": "Satoshi, Inter, sans-serif",
+      "weights": ["regular", "medium"],
+      "usage": "Clean, legible, modern body copy. Use for descriptions, bios, and standard UI text."
+    },
+    "accent": {
+      "font_family": "JetBrains Mono, monospace",
+      "usage": "Use for metadata, artwork dimensions, prices, and small UI labels. Must be uppercase with wide spacing (tracking-[0.2em])."
+    }
+  },
+  "colors": {
+    "archetype": "Swiss & High-Contrast (Gallery Aesthetic)",
+    "light_mode": {
+      "background": "#FAFAFA",
+      "surface": "#FFFFFF",
+      "surface_secondary": "#F3F4F6",
+      "text_primary": "#0A0A0A",
+      "text_secondary": "#525252",
+      "border": "#E5E5E5",
+      "accent": "#E63946"
+    },
+    "dark_mode": {
+      "background": "#050505",
+      "surface": "#121212",
+      "surface_secondary": "#1A1A1A",
+      "text_primary": "#F5F5F5",
+      "text_secondary": "#A3A3A3",
+      "border": "#262626",
+      "accent": "#FF4D4D"
+    },
+    "rules": [
+      "Accent color (Signal Red) must be used sparingly—only for primary conversion actions (Buy, Follow, Custom Order) or active indicators (like a gallery 'sold' dot).",
+      "Avoid Teal Green, Teal Blue, and #7351B7 completely.",
+      "Do not use generic gradients. Backgrounds should be stark and monochrome.",
+      "Dark mode is preferred for reels and discovery to make colors pop, while profiles can utilize stark white light mode."
+    ]
+  },
+  "layouts": {
+    "discovery_feed": "Masonry Grid layout. Images must have varied heights, spanning 2-4 columns on desktop, 1 on mobile. Generous gap-8 between items.",
+    "reels": "Full-screen vertical snap scrolling (100vh containers). Floating UI elements overlaid using Glassmorphism.",
+    "artist_portfolio": "Bento Grid (Tetris Mode A). Asymmetrical layout featuring 1 dominant hero piece (col-span-8 row-span-2) and smaller supporting pieces. Use gap-8.",
+    "dashboard_analytics": "High Density Grid (Mode B) for creators and retailers. Tight gaps (gap-4). Pure functional data display.",
+    "spacing": "Generous Spacing Philosophy. Use p-8, p-12, or p-16 for sections. Do not cram elements together."
+  },
+  "surfaces_and_components": {
+    "art_cards": "Cardless or Rectangular. 0px border radius (rounded-none) to mimic physical canvases or frames. No heavy drop shadows. In light mode, use a 1px subtle border; in dark mode, rely on spacing.",
+    "headers_navigation": "Crystal Glassmorphism. If content scrolls underneath, use backdrop-blur-xl bg-white/70 (light) or bg-black/60 (dark) with a delicate 1px inner stroke. NEVER use a completely transparent background.",
+    "buttons": "Sharp edges (rounded-none) or very slight radius (rounded-sm). High contrast. Primary buttons should use the accent red or inverted monochrome.",
+    "forms_inputs": "Use Shadcn components. Strip the default rounded borders to match the sharp gallery aesthetic.",
+    "data_display": "Use Shadcn Table and Charts (Recharts). Keep charts monochrome with the accent color for the primary metric."
+  },
+  "motion_and_interactions": {
+    "hover_states": "Artwork images must scale slightly (scale-105) on hover with a slow transition (duration-500 ease-out). Text color must explicitly change on interactive elements.",
+    "page_transitions": "Use Framer Motion for smooth fade-ins and staggered list animations when loading masonry grids.",
+    "scrolling": "Implement 'lenis' for smooth scrolling on desktop to give the site a premium, weighty feel."
+  },
+  "visual_enhancers": {
+    "overlays": "Hero image overlays max bg-black/40. If text needs contrast, use a gradient overlay fading to transparent, not a flat blanket.",
+    "texture": "Subtle noise/grain texture overlaid on the background via a fixed CSS mix-blend-mode layer to eliminate digital flatness.",
+    "empty_states": "Use minimalist line-art or elegant typography. No cartoonish illustrations."
+  },
+  "accessibility": {
+    "testing": "All interactive elements, buttons, links, and forms MUST include a 'data-testid' attribute (e.g., data-testid='buy-now-button').",
+    "contrast": "Ensure text meets WCAG AA standards. Focus states must have higher contrast.",
+    "motion": "Respect prefers-reduced-motion."
+  },
+  "media": {
+    "image_usage_rules": "Always use provided URLs. Do not use placeholder services. Images must not exceed 80vh on mobile devices.",
+    "image_urls": {
+      "abstract_art": [
+        "https://images.unsplash.com/photo-1785084288792-51e64dccb318?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzN8MHwxfHNlYXJjaHwzfHxhYnN0cmFjdCUyMHBhaW50aW5nJTIwZ2FsbGVyeXxlbnwwfHx8fDE3ODY5OTQ4ODZ8MA&ixlib=rb-4.1.0&q=85",
+        "https://images.pexels.com/photos/1475390/pexels-photo-1475390.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "https://images.pexels.com/photos/1546542/pexels-photo-1546542.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+      ],
+      "digital_3d_art": [
+        "https://images.unsplash.com/photo-1729271170441-27c856c4922a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njl8MHwxfHNlYXJjaHwzfHxkaWdpdGFsJTIwM2QlMjBhcnQlMjBkZXNpZ258ZW58MHx8fHwxNzg2OTk0ODg3fDA&ixlib=rb-4.1.0&q=85",
+        "https://images.pexels.com/photos/29626041/pexels-photo-29626041.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "https://images.pexels.com/photos/36025195/pexels-photo-36025195.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+      ],
+      "ceramics_sculpture": [
+        "https://images.pexels.com/photos/19341648/pexels-photo-19341648.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "https://images.pexels.com/photos/28486231/pexels-photo-28486231.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+      ],
+      "artist_profiles": [
+        "https://images.unsplash.com/photo-1614244139209-53c071a4737d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTJ8MHwxfHNlYXJjaHwzfHxhcnRpc3QlMjBzdHVkaW8lMjB3b3JraW5nfGVufDB8fHx8MTc4Njk5NDg4Nnww&ixlib=rb-4.1.0&q=85",
+        "https://images.pexels.com/photos/933255/pexels-photo-933255.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+      ]
+    }
+  },
+  "libraries_and_dependencies": [
+    "lucide-react (Icons)",
+    "sonner (Toast notifications)",
+    "framer-motion (Animations)",
+    "@studio-freight/lenis (Smooth scrolling)",
+    "recharts (Dashboards)",
+    "react-masonry-css (or similar for discovery feed)"
+  ],
+  "instructions_to_main_agent": {
+    "general": [
+      "Avoid generic 'AI slop' aesthetics. Do not center-align the app container (.App { text-align: center; } is banned).",
+      "Never use AI assistant emoji characters (🤖🧠💭💡) for icons.",
+      "Implement a robust Dark/Light mode toggle since the platform serves both content consumption (Dark preferred) and management (Light preferred).",
+      "Do not apply 'transition: all' globally. Target specific properties.",
+      "Ensure z-index hierarchy is respected for sticky headers and overlays.",
+      "Use pre-existing Shadcn components from /app/frontend/src/components/ui/ when possible.",
+      "If you need to use Shadcn components that are not HTML standard (like Select, Dialog, Calendar), use the Shadcn implementation.",
+      "Code is in JavaScript (.js, .jsx), NOT TypeScript. Do not include TS interfaces or types."
+    ]
+  }
+}
