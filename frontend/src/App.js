@@ -23,6 +23,7 @@ import SupportPage from "@/pages/SupportPage";
 import NotificationsPage from "@/pages/NotificationsPage";
 import SettingsPage from "@/pages/SettingsPage";
 import SavedPage from "@/pages/SavedPage";
+import EnquiryPage from "@/pages/EnquiryPage";
 
 const ThemeContext = createContext(null);
 export const useTheme = () => useContext(ThemeContext);
@@ -93,6 +94,7 @@ export default function App() {
               <Route path="/notifications" element={<RequireAuth><NotificationsPage /></RequireAuth>} />
               <Route path="/settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
               <Route path="/saved" element={<RequireAuth><SavedPage /></RequireAuth>} />
+              <Route path="/enquiry" element={<EnquiryPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>

@@ -1,0 +1,51 @@
+{
+  "summary": "Iteration 4 verification. Backend suite expanded 59 → 67 tests, all passing (17-47s depending on parallelism). Added TestEnquiries (5 tests: unauth create OK, 400 validation, admin list, customer 403, admin resolve + 404), TestDefaultAddress (add 2 addresses, first auto-defaults if none pre-existing, star toggle default via POST /api/users/me/addresses/{id}/default, unknown id → 404), TestAuthMeCounters (cart_count/wishlist_count/message_count/unread_notifications all present + int on /api/auth/me). Frontend end-to-end verified on desktop 1920x1080 and mobile 390x780: (Bug1) hero-arrows in bottom-right cluster (x=1640..1728 on desktop, x=286..374 on mobile), hero-dots centered, hero-title / hero-tag / hero-cta-primary fully visible, arrows and dots don't overlap the title bbox on either viewport; prev/next arrow + hero-dot-2 mutate hero-title as expected. (Bug2) Mobile hamburger sheet has role=dialog, largest scrollable child has data-lenis-prevent=true, canScroll=true (scrollHeight 1106 vs client 780, scrolled from 0 → 326); after scroll m-create-company/m-become-retailer/m-enquiry/m-logout all is_visible=true and within viewport. (Bug3) nav-categories absent on desktop navbar (nav-discover/nav-reels/nav-marketplace still present), m-categories still present in mobile Sheet. Enquiry flow: /enquiry renders enquiry-page + enquiry-form; submit with name + requirement (Radix Select) shows enquiry-success screen. Admin login → /admin → admin-tab-enquiries lists rows (5), resolve-enquiry-{id} button fires POST and shows 'Resolved' toast + status pill flips to RESOLVED. Nav badges after adding 1 to cart + 1 to wishlist: nav-cart='1', nav-cart-badge='1', nav-wishlist='1', nav-wishlist-badge='1', nav-unread-badge='3', nav-notifications='3'. Cart summary displays no-refund-note ('All sales are final — Sketch does not offer refunds. Disputes are resolved via support.'). Support/FAQ has an explicit refund FAQ entry ('What is the refund policy?' → 'There is none — all sales are final...'). Login used email/password from /app/memory/test_credentials.md; cookie auth working. Cleaned up 5 TEST_ enquiries + cleared login_attempts before final run.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "pytest suite with xdist", "issue": "TestCheckout.test_full_purchase_flow + TestSellerShipping.test_ship_and_deliver can flake if TEST_widget seed stock (3) is exhausted by parallel workers before their turn. Re-run passes. Consider bumping seed stock or serializing checkout tests with @pytest.mark.serial."},
+      {"endpoint": "POST /api/auth/login", "issue": "5-fail lockout is per (ip,email) but the login_attempts collection is never expired/cleaned — after several test iterations stale docs cause 429 on the very first invalid-login test of a fresh run. Add TTL index on login_attempts.last_attempt or delete on successful login already exists but doesn't purge cross-run."},
+      {"endpoint": "POST /api/enquiries", "issue": "No rate limiting on the public enquiry endpoint — anyone can POST unlimited. Consider basic IP-based throttle since this endpoint spams the super_admin inbox via notify()."},
+      {"endpoint": "GET /api/admin/enquiries", "issue": "Returns all enquiries with .to_list(200) but no pagination / status filter — will get slow when enquiries pile up."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Discover hero (Iteration-3 carry-over)", "issues": ["Left-side gradient overlay still slightly clips the kicker copy on desktop (was reported in iter_3, remains unchanged). Not blocking."]},
+      {"screen": "Reels (carry-over)", "issues": ["Seeded reels with placeholder media_url='http://x/img.png' still produce ERR_NAME_NOT_RESOLVED + Mixed-Content warnings. Filter or fallback poster suggested."]},
+      {"screen": "Admin enquiries tab", "issues": ["Budget shows '₹NaN' when budget is a free-text string (e.g. '10L') rather than a number — parseInt/inr() fallback needed."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(LOW) Fix admin-enquiries Budget rendering when budget is non-numeric — currently shows ₹NaN.",
+    "(LOW) Add rate limit to POST /api/enquiries.",
+    "(LOW) Bump TEST_widget seed stock (currently 3) or mark checkout+shipping tests non-parallel to remove xdist flake.",
+    "(LOW / carry-over) Add TTL index on login_attempts collection.",
+    "(LOW / carry-over) Replace reels placeholder media URLs to remove console warnings."
+  ],
+  "critical_code_review_comments": [
+    "server.py now 1984 lines — the split-into-routers debt keeps growing every iteration. Extract enquiries, addresses, notifications into their own router modules.",
+    "POST /users/me/addresses hard-codes required keys `line/city/pin` — but the earlier addresses UI (and iter_3 tests) exercised the same schema. Field names are inconsistent with a checkout `body.get('address')` free-text field in orders. Standardise the address shape (line1/line2/city/state/pincode) app-wide.",
+    "PUT /users/me/addresses/{id} does not allow updating `is_default`; a client can only flip default via the new endpoint — fine, but document it (or return the merged doc for consistency).",
+    "POST /api/enquiries notifies only super_admin role, but list_enquiries + resolve are guarded by ADMIN_ROLES (admin + super_admin). Regular admins never get notified — either widen the notify recipients or narrow the RBAC to super_admin only.",
+    "enquiry doc has no `resolved_by` / `resolved_at` audit fields — add for accountability.",
+    "no-refund-note is only rendered inside the checkout aside (only when cart has items) — if user lands on empty cart there is no visible policy. Consider surfacing near cart header too.",
+    "auth/me now does 4 extra queries per request (cart, wishlist, notifications count, threads) — this endpoint is polled on every route change; combine into a single aggregate or add short-lived cache."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {"backend": "100% (67/67)", "frontend": "100% of iteration-4 acceptance criteria verified (hero desktop+mobile, mobile-menu scroll, no desktop nav-categories, enquiry create+admin resolve, cart no-refund-note, nav badges, FAQ refund entry)"},
+  "test_credentials": "All accounts in /app/memory/test_credentials.md verified working. Used customer@sketch.app and admin@sketch.app for UI runs.",
+  "seed_data_creation": "TestEnquiries creates one TEST_enq-prefixed enquiry per run (cleaned up post-test via direct db call). TestDefaultAddress creates 2 TEST_ addresses on customer and deletes them. UI test also submitted 1 TEST_UI Enq via /enquiry and 5 admin-resolved leftover TEST_ enquiries were purged. login_attempts collection was cleared once before the final suite run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regression suite at /app/backend/tests/backend_test.py — 67 tests. If TestCheckout or TestSellerShipping fails with 'Cart is empty' / 'Order cannot be shipped', it is an xdist stock race — reseed TEST_widget or re-run. If TestAuth.test_login_invalid returns 429 instead of 401, clear the login_attempts collection (`db.login_attempts.delete_many({})`) before running. Frontend testids added this iteration: nav-cart / nav-cart-badge / nav-wishlist / nav-wishlist-badge / nav-notifications / nav-unread-badge / mobile-menu-btn / m-home / m-discover / m-reels / m-marketplace / m-categories / m-wishlist / m-cart / m-notifications / m-orders / m-saved / m-support / m-settings / m-profile / m-portfolio / m-my-reels / m-custom-requests / m-enquiry / m-create-company / m-become-retailer / m-logout / enquiry-page / enquiry-form / enquiry-name / enquiry-requirement / enquiry-submit / enquiry-success / admin-tab-enquiries / enquiry-{id} / resolve-enquiry-{id} / no-refund-note. Enquiry requirement field is a Radix Select (not a text input) — open it and click a [role=option].",
+  "rca_of_the_issue": "N/A — no new bugs found. Two pre-existing flakes documented: (a) xdist parallel test race on seed stock, (b) login_attempts lockout across test runs."
+}

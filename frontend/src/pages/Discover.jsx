@@ -158,6 +158,20 @@ export default function Discover() {
             <EmptyState testid="explore-empty" title="Nothing in this category yet" hint="Check back soon — creators publish daily." />
           )}
         </section>
+
+        <section className="mt-20 mb-16 border border-border/60 bg-card p-8 sm:p-12 flex flex-col sm:flex-row items-start sm:items-center gap-6 justify-between" data-testid="platform-enquiry-cta">
+          <div>
+            <p className="font-meta text-[10px] text-primary mb-2">For brands & studios</p>
+            <h2 className="font-display text-3xl sm:text-4xl font-black tracking-tighter">Build your own art platform.</h2>
+            <p className="text-muted-foreground text-sm mt-3 max-w-lg">
+              Sketch powers white-label creative ecosystems — marketplaces, reels, commissions and payouts. Tell us your requirement and budget.
+            </p>
+          </div>
+          <Button data-testid="enquiry-cta-btn" onClick={() => navigate("/enquiry")}
+            className="rounded-none font-meta text-[11px] h-12 px-8 shrink-0">
+            Submit an enquiry
+          </Button>
+        </section>
       </div>
     </div>
   );
@@ -183,9 +197,9 @@ function Hero({ banners }) {
         <img key={b.id || i} src={fileUrl(b.image)} alt={b.title}
           className={`hero-slide absolute inset-0 h-full w-full object-cover ${i === slide ? "opacity-60" : "opacity-0"}`} />
       ))}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-black/20" />
+      <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-black/25" />
 
-      <div className="relative z-10 h-full max-w-[1600px] mx-auto px-14 sm:px-20 flex flex-col justify-end pb-16 sm:pb-20 text-white">
+      <div className="relative z-10 h-full max-w-[1600px] mx-auto px-4 sm:px-8 flex flex-col justify-end pb-20 sm:pb-24 text-white">
         <div key={slide} className="hero-content max-w-2xl">
           <p className="font-meta text-[10px] sm:text-[11px] text-primary" data-testid="hero-tag">{active.tag}</p>
           <h1 className="font-display text-4xl sm:text-6xl lg:text-7xl font-black tracking-tighter leading-[0.95] mt-3" data-testid="hero-title">
@@ -194,15 +208,15 @@ function Hero({ banners }) {
           <p className="text-white/70 text-sm sm:text-base mt-4 max-w-lg">{active.subtitle}</p>
           <div className="flex flex-wrap gap-3 mt-8">
             <Button data-testid="hero-cta-primary" onClick={() => navigate(active.cta_link)}
-              className="rounded-none font-meta text-[11px] h-12 px-8 bg-primary hover:bg-primary/90">
+              className="rounded-none font-meta text-[11px] h-11 sm:h-12 px-6 sm:px-8 bg-primary hover:bg-primary/90">
               {active.cta_label}
             </Button>
             <Button data-testid="hero-cta-explore" variant="outline" onClick={() => navigate("/marketplace")}
-              className="rounded-none font-meta text-[11px] h-12 px-8 bg-transparent text-white border-white/40 hover:bg-white hover:text-black">
+              className="rounded-none font-meta text-[11px] h-11 sm:h-12 px-6 sm:px-8 bg-black/30 backdrop-blur-md text-white border-white/40 hover:bg-white hover:text-black">
               <Compass className="h-4 w-4 mr-2" /> Explore artwork
             </Button>
             <Button data-testid="hero-cta-creator" variant="outline" onClick={() => navigate("/auth")}
-              className="rounded-none font-meta text-[11px] h-12 px-8 bg-transparent text-white border-white/40 hover:bg-white hover:text-black">
+              className="rounded-none font-meta text-[11px] h-11 sm:h-12 px-6 sm:px-8 bg-black/30 backdrop-blur-md text-white border-white/40 hover:bg-white hover:text-black">
               <Brush className="h-4 w-4 mr-2" /> Become a creator
             </Button>
           </div>
@@ -210,15 +224,17 @@ function Hero({ banners }) {
 
         {count > 1 && (
           <>
-            <button data-testid="hero-prev" onClick={() => setSlide((slide - 1 + count) % count)}
-              className="absolute left-4 sm:left-8 top-1/2 -translate-y-1/2 h-11 w-11 border border-white/30 bg-black/30 backdrop-blur-md text-white flex items-center justify-center hover:bg-white hover:text-black transition-colors">
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-            <button data-testid="hero-next" onClick={() => setSlide((slide + 1) % count)}
-              className="absolute right-4 sm:right-8 top-1/2 -translate-y-1/2 h-11 w-11 border border-white/30 bg-black/30 backdrop-blur-md text-white flex items-center justify-center hover:bg-white hover:text-black transition-colors">
-              <ArrowRight className="h-4 w-4" />
-            </button>
-            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-2" data-testid="hero-dots">
+            <div className="absolute bottom-6 right-4 sm:right-8 flex gap-2" data-testid="hero-arrows">
+              <button data-testid="hero-prev" onClick={() => setSlide((slide - 1 + count) % count)}
+                className="h-10 w-10 border border-white/30 bg-black/40 backdrop-blur-md text-white flex items-center justify-center hover:bg-white hover:text-black transition-colors">
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+              <button data-testid="hero-next" onClick={() => setSlide((slide + 1) % count)}
+                className="h-10 w-10 border border-white/30 bg-black/40 backdrop-blur-md text-white flex items-center justify-center hover:bg-white hover:text-black transition-colors">
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="absolute bottom-7 left-1/2 -translate-x-1/2 flex gap-2" data-testid="hero-dots">
               {banners.map((_, i) => (
                 <button key={i} data-testid={`hero-dot-${i}`} onClick={() => setSlide(i)}
                   className={`h-1 transition-all ${i === slide ? "w-8 bg-primary" : "w-3 bg-white/40 hover:bg-white/70"}`} />

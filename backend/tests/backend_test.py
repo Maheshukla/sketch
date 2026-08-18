@@ -1021,3 +1021,106 @@ class TestReelsHashtagAndPagination:
         # No overlap
         assert not (ids1 & ids2)
 
+
+# ---- Iteration 4: Enquiries, Default address, Auth-me badge counters ----
+class TestEnquiries:
+    def test_create_enquiry_unauth_ok(self):
+        r = requests.post(f"{API}/enquiries", json={
+            "name": "TEST_enq " + uuid.uuid4().hex[:6],
+            "company": "TEST co",
+            "requirement": "art platform",
+            "budget": "10L",
+            "description": "TEST_desc"
+        })
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data.get("status") == "open"
+        assert "id" in data
+        TestEnquiries.eid = data["id"]
+
+    def test_create_enquiry_validation_400(self):
+        r = requests.post(f"{API}/enquiries", json={"company": "X"})
+        assert r.status_code == 400
+
+    def test_admin_list_enquiries(self, admin):
+        r = admin.get(f"{API}/admin/enquiries")
+        assert r.status_code == 200
+        arr = r.json()
+        assert isinstance(arr, list)
+        assert any(e["id"] == TestEnquiries.eid for e in arr)
+
+    def test_customer_cannot_list_enquiries(self, customer):
+        r = customer.get(f"{API}/admin/enquiries")
+        assert r.status_code == 403
+
+    def test_admin_resolve_enquiry(self, admin):
+        r = admin.post(f"{API}/admin/enquiries/{TestEnquiries.eid}/resolve")
+        assert r.status_code == 200
+        # verify persisted
+        arr = admin.get(f"{API}/admin/enquiries").json()
+        got = [e for e in arr if e["id"] == TestEnquiries.eid]
+        assert got and got[0]["status"] == "resolved"
+
+    def test_resolve_missing_404(self, admin):
+        r = admin.post(f"{API}/admin/enquiries/000000000000000000000000/resolve")
+        assert r.status_code == 404
+
+
+class TestDefaultAddress:
+    def test_default_address_flow(self, customer):
+        # snapshot existing addresses
+        me = customer.get(f"{API}/auth/me").json()
+        pre_ids = {a["id"] for a in me.get("addresses", [])}
+        # add two TEST_ addresses
+        payload_a = {"line": "TEST_A1 street", "city": "TESTCITY", "pin": "560001", "phone": "9999900001", "label": "TEST_A"}
+        payload_b = {"line": "TEST_B1 street", "city": "TESTCITY", "pin": "560002", "phone": "9999900002", "label": "TEST_B"}
+        r1 = customer.post(f"{API}/users/me/addresses", json=payload_a)
+        assert r1.status_code == 200, r1.text
+        r2 = customer.post(f"{API}/users/me/addresses", json=payload_b)
+        assert r2.status_code == 200, r2.text
+
+        me = customer.get(f"{API}/auth/me").json()
+        new_addrs = [a for a in me.get("addresses", []) if a["id"] not in pre_ids]
+        assert len(new_addrs) >= 2
+        a_id = next(a["id"] for a in new_addrs if a.get("label") == "TEST_A")
+        b_id = next(a["id"] for a in new_addrs if a.get("label") == "TEST_B")
+
+        # If user had zero pre-existing addresses, first added should be default
+        if not pre_ids:
+            first = next(a for a in me["addresses"] if a["id"] == a_id)
+            assert first.get("is_default") is True, "first added address must auto-default"
+
+        # set B as default
+        r = customer.post(f"{API}/users/me/addresses/{b_id}/default")
+        assert r.status_code == 200
+        me = customer.get(f"{API}/auth/me").json()
+        for a in me["addresses"]:
+            if a["id"] == b_id:
+                assert a.get("is_default") is True
+            else:
+                assert a.get("is_default") is False, f"{a['id']} should not be default anymore"
+
+        # switch back to A
+        r = customer.post(f"{API}/users/me/addresses/{a_id}/default")
+        assert r.status_code == 200
+        me = customer.get(f"{API}/auth/me").json()
+        assert next(a for a in me["addresses"] if a["id"] == a_id).get("is_default") is True
+
+        # 404 unknown
+        r = customer.post(f"{API}/users/me/addresses/nonexistent-id/default")
+        assert r.status_code == 404
+
+        # cleanup: delete both TEST_ addresses
+        for aid in (a_id, b_id):
+            customer.delete(f"{API}/users/me/addresses/{aid}")
+
+
+class TestAuthMeCounters:
+    def test_counters_present(self, customer):
+        r = customer.get(f"{API}/auth/me")
+        assert r.status_code == 200
+        me = r.json()
+        for k in ("cart_count", "wishlist_count", "unread_notifications", "message_count"):
+            assert k in me, f"missing {k} in /auth/me"
+            assert isinstance(me[k], int)
+

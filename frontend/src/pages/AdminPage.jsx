@@ -19,6 +19,7 @@ export default function AdminPage() {
   const [queueType, setQueueType] = useState("reels");
   const [reports, setReports] = useState([]);
   const [tickets, setTickets] = useState([]);
+  const [enquiries, setEnquiries] = useState([]);
   const [reply, setReply] = useState({});
   const [newAdmin, setNewAdmin] = useState({ name: "", email: "", password: "", role: "admin" });
   const [newCat, setNewCat] = useState({ name: "", subcategories: "" });
@@ -35,6 +36,7 @@ export default function AdminPage() {
     loadQueue("reels");
     loadReports();
     loadTickets();
+    api.get("/admin/enquiries").then((r) => setEnquiries(r.data)).catch(() => {});
   }, []);
 
   const act = (fn, msg, after) => async () => {
@@ -55,7 +57,7 @@ export default function AdminPage() {
 
       <Tabs defaultValue="overview">
         <TabsList className="rounded-none mb-8 flex-wrap h-auto">
-          {["overview", "users", "moderation", "reports", "tickets", "categories"].map((t) => (
+          {["overview", "users", "moderation", "reports", "tickets", "enquiries", "categories"].map((t) => (
             <TabsTrigger key={t} value={t} data-testid={`admin-tab-${t}`} className="rounded-none font-meta text-[10px]">{t}</TabsTrigger>
           ))}
         </TabsList>
@@ -229,6 +231,33 @@ export default function AdminPage() {
             ))}
             {!tickets.length && <EmptyState testid="tickets-empty" title="No tickets" />}
           </div>
+        </TabsContent>
+
+        <TabsContent value="enquiries">
+          {!enquiries.length ? (
+            <EmptyState testid="enquiries-empty" title="No enquiries" hint="'Build your own art platform' enquiries land here." />
+          ) : (
+            <div className="space-y-3">
+              {enquiries.map((e) => (
+                <div key={e.id} className="border border-border/60 p-5 flex flex-wrap items-center gap-4" data-testid={`enquiry-${e.id}`}>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-display font-bold text-sm">{e.name} {e.company && <span className="text-muted-foreground font-normal">· {e.company}</span>}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{e.requirement} {e.budget && `· Budget ${isNaN(Number(e.budget)) ? e.budget : `₹${Number(e.budget).toLocaleString("en-IN")}`}`}</p>
+                    {e.description && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{e.description}</p>}
+                    <p className="font-meta text-[9px] text-muted-foreground mt-2">{new Date(e.created_at).toLocaleDateString()}</p>
+                  </div>
+                  <StatusBadge status={e.status} />
+                  {e.status === "open" && (
+                    <Button size="sm" variant="outline" data-testid={`resolve-enquiry-${e.id}`} className="rounded-none font-meta text-[9px]"
+                      onClick={act(() => api.post(`/admin/enquiries/${e.id}/resolve`), "Resolved",
+                        () => api.get("/admin/enquiries").then((r) => setEnquiries(r.data)))}>
+                      Resolve
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="categories">

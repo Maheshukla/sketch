@@ -58,6 +58,16 @@ A SaaS platform combining Instagram (reels/social), Behance (portfolios), Etsy (
 - Regression fix: public_user now serializes ObjectId lists (login 500 for followed users)
 - Testing: iteration_3 — 59/59 backend tests pass (suite extended with banners/trending/addresses/lifecycle/collections/negotiation/username/verify/hashtags/razorpay-fallback coverage); hero + sections + hashtag filter verified in browser; tester fixed login tz-naive lockout comparison and checkout address_id persistence inline; follow-up fixes applied: hero kicker padding, empty address-edit 400
 
+## Iteration 4 — UI fixes + SaaS architecture gaps (2026-08-18)
+- Hero: arrows moved to bottom-right cluster (never overlap text), dots centered, stronger overlay, responsive text spacing
+- Mobile menu: scrollable (h-full + overflow-y-auto + data-lenis-prevent on Sheet/Dialog — Lenis was blocking overlay scroll)
+- Desktop navbar: Categories dropdown removed (categories live in sticky bar below hero)
+- New: "Build your own art platform" — /enquiry public form, POST /api/enquiries, admin enquiries tab with resolve, super-admin notification, home CTA band, mobile menu item
+- Addresses: default address (first auto-defaults, star toggle, checkout auto-selects)
+- No-refund policy note on cart summary + FAQ entry (all sales final)
+- Badges: auth/me returns cart_count, wishlist_count, unread_notifications, message_count; navbar + mobile menu badges
+- Testing: iteration_4 — 67/67 backend tests pass (suite extended: enquiries, default addresses, auth/me counters); both reported UI bugs verified fixed by testing agent on desktop + mobile; follow-up fixes applied: ₹NaN budget guard, enquiry rate limit (20/hr/IP) + admin notifications + resolved_by/resolved_at audit, login_attempts TTL index
+
 ## Backlog
 - P0: Real Razorpay + webhook verification; real SMS OTP provider
 - P1: Balance payment for advance-paid custom orders; refunds/disputes flow; live chat; reel video transcoding; saved-reels page; sales analytics aggregation pipeline

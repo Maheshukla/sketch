@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Minus, Plus, Trash2, ShieldCheck, BookmarkPlus, ArrowUpToLine, MapPin, Pencil } from "lucide-react";
+import { Minus, Plus, Trash2, ShieldCheck, BookmarkPlus, ArrowUpToLine, MapPin, Pencil, Star } from "lucide-react";
 import api, { fmtErr, inr, fileUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,8 +43,14 @@ export default function CartPage() {
   const load = () => api.get("/cart").then((r) => setItems(r.data.items));
   const loadAddresses = () => api.get("/users/me/addresses").then((r) => {
     setAddresses(r.data);
-    if (r.data.length && !addrId) setAddrId(r.data[0].id);
+    if (r.data.length && !addrId) setAddrId((r.data.find((a) => a.is_default) || r.data[0]).id);
   }).catch(() => {});
+
+  const setDefaultAddr = async (id) => {
+    await api.post(`/users/me/addresses/${id}/default`);
+    setAddrId(id);
+    loadAddresses();
+  };
   useEffect(() => {
     load();
     loadAddresses();
@@ -201,7 +207,11 @@ export default function CartPage() {
                       <p className="font-display font-bold text-sm flex items-center gap-1.5">
                         <MapPin className="h-3.5 w-3.5 text-primary" /> {a.label}
                       </p>
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 items-center">
+                        <button data-testid={`default-address-${a.id}`} onClick={(e) => { e.stopPropagation(); setDefaultAddr(a.id); }}
+                          title="Set as default" className={`transition-colors ${a.is_default ? "text-amber-400" : "text-muted-foreground hover:text-amber-400"}`}>
+                          <Star className={`h-3.5 w-3.5 ${a.is_default ? "fill-amber-400" : ""}`} />
+                        </button>
                         <button data-testid={`edit-address-${a.id}`} onClick={(e) => { e.stopPropagation(); setAddrForm(a); setAddrEditing(a.id); setShowAddrForm(true); }}
                           className="text-muted-foreground hover:text-foreground transition-colors">
                           <Pencil className="h-3.5 w-3.5" />
@@ -268,6 +278,9 @@ export default function CartPage() {
             </Button>
             <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
               <ShieldCheck className="h-3.5 w-3.5" /> Payments held in escrow until delivery.
+            </p>
+            <p className="text-[11px] text-muted-foreground" data-testid="no-refund-note">
+              All sales are final — Sketch does not offer refunds. Disputes are resolved via support.
             </p>
           </aside>
         </div>

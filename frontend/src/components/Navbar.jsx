@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Bell, ChevronDown, Heart, LayoutDashboard, LogOut, Menu, Moon, Package, Plus, Search, ShoppingBag, Store, Sun, User, Users, LifeBuoy, Shield, Settings, Bookmark, Brush, Clapperboard, Image, Grid, Home, Compass, Store as ShopIcon, BadgeCheck } from "lucide-react";
+import { Bell, ChevronDown, Heart, LayoutDashboard, LogOut, Menu, Moon, Package, Plus, Search, ShoppingBag, Sparkles, Store, Sun, User, Users, LifeBuoy, Shield, Settings, Bookmark, Brush, Clapperboard, Image, Grid, Home, Compass, Store as ShopIcon, BadgeCheck } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/App";
 import { toast } from "sonner";
@@ -58,7 +58,7 @@ export default function Navbar() {
               <Menu className="h-5 w-5" />
             </Button>
           </SheetTrigger>
-          <SheetContent side="left" className="rounded-none w-80 p-0 overflow-y-auto" data-testid="mobile-menu">
+          <SheetContent side="left" data-lenis-prevent className="rounded-none w-80 p-0 h-full overflow-y-auto" data-testid="mobile-menu">
             <SheetHeader className="p-5 border-b border-border/60">
               <SheetTitle className="font-display text-xl font-black tracking-tighter text-left">
                 Sketch<span className="text-primary">.</span>
@@ -114,7 +114,9 @@ export default function Navbar() {
                       <MenuItem testid="m-my-products" icon={Store} label="My Products" onClick={() => go("/studio?tab=listings")} />
                     </>
                   )}
-                  <MenuItem testid="m-custom-requests" icon={Plus} label="My Custom Requests" onClick={() => go("/custom-orders")} />
+                  <MenuItem testid="m-custom-requests" icon={Plus} label="My Custom Requests" onClick={() => go("/custom-orders")}
+                    badge={user?.message_count} />
+                  <MenuItem testid="m-enquiry" icon={Sparkles} label="Build your platform" onClick={() => go("/enquiry")} />
                   {!user.company_id && <MenuItem testid="m-create-company" icon={Users} label="Create Company" onClick={() => go("/company")} />}
                   {user.role === "customer" && <MenuItem testid="m-become-retailer" icon={BadgeCheck} label="Become a Retailer" onClick={becomeRetailer} />}
                   {STAFF.includes(user.role) && <MenuItem testid="m-admin" icon={Shield} label="Admin panel" onClick={() => go("/admin")} />}
@@ -132,21 +134,6 @@ export default function Navbar() {
         </Link>
 
         <nav className="hidden lg:flex items-center gap-5 font-meta text-[11px] text-muted-foreground shrink-0">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button data-testid="nav-categories" className="flex items-center gap-1 hover:text-foreground transition-colors outline-none">
-                Categories <ChevronDown className="h-3 w-3" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent className="rounded-none w-52 max-h-80 overflow-y-auto">
-              {CATEGORIES.map((c) => (
-                <DropdownMenuItem key={c} data-testid={`nav-cat-${c.toLowerCase().replace(/\s+/g, "-")}`}
-                  onClick={() => navigate(`/marketplace?category=${encodeURIComponent(c)}`)}>
-                  {c}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
           <Link to="/" data-testid="nav-discover" className="hover:text-foreground transition-colors">Discover</Link>
           <Link to="/reels" data-testid="nav-reels" className="hover:text-foreground transition-colors">Reels</Link>
           <Link to="/marketplace" data-testid="nav-marketplace" className="hover:text-foreground transition-colors">Marketplace</Link>

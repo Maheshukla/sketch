@@ -69,6 +69,10 @@ async def seed(db):
     await db.users.create_index("email", unique=True)
     await db.otps.create_index("expires_at", expireAfterSeconds=0)
     await db.login_attempts.create_index("identifier")
+    try:
+        await db.login_attempts.create_index("locked_until", expireAfterSeconds=0)
+    except Exception:
+        pass
     await db.products.create_index([("title", "text"), ("description", "text"), ("tags", "text")])
 
     import os

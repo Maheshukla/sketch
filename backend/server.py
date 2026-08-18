@@ -187,7 +187,9 @@ async def me(user=Depends(current_user)):
     cart_count = sum(i["qty"] for i in cart.get("items", []) if not i.get("saved")) if cart else 0
     wl = await db.wishlists.find_one({"user_id": uid})
     wl_count = len(wl.get("product_ids", [])) if wl else 0
-    return {**user, "unread_notifications": unread, "cart_count": cart_count, "wishlist_count": wl_count}
+    msg_count = await db.notifications.count_documents({"user_id": uid, "read": False, "type": "message"})
+    return {**user, "unread_notifications": unread, "cart_count": cart_count,
+            "wishlist_count": wl_count, "message_count": msg_count}
 
 
 @api_router.post("/auth/refresh")
@@ -478,7 +480,10 @@ async def add_address(request: Request, user=Depends(current_user)):
         raise HTTPException(400, "Address line, city and PIN are required")
     addr = {"id": uuid.uuid4().hex[:10], "label": body.get("label", "Home"),
             "line": body["line"], "city": body["city"], "pin": body["pin"],
-            "phone": body.get("phone", "")}
+            "phone": body.get("phone", ""), "is_default": False}
+    existing = await db.users.find_one({"_id": oid(user["id"])})
+    if not (existing or {}).get("addresses"):
+        addr["is_default"] = True
     await db.users.update_one({"_id": oid(user["id"])}, {"$push": {"addresses": addr}})
     return addr
 
@@ -1709,6 +1714,53 @@ async def ticket_status(ticket_id: str, request: Request, user=Depends(require(*
         raise HTTPException(400, "Invalid status")
     await db.tickets.update_one({"_id": oid(ticket_id)}, {"$set": {"status": body["status"]}})
     return pub(await db.tickets.find_one({"_id": oid(ticket_id)}))
+
+
+@api_router.post("/users/me/addresses/{addr_id}/default")
+async def set_default_address(addr_id: str, user=Depends(current_user)):
+    await db.users.update_one({"_id": oid(user["id"])}, {"$set": {"addresses.$[].is_default": False}})
+    res = await db.users.update_one({"_id": oid(user["id"]), "addresses.id": addr_id},
+                                    {"$set": {"addresses.$.is_default": True}})
+    if not res.matched_count:
+        raise HTTPException(404, "Address not found")
+    return {"ok": True}
+
+
+# ---------------- Platform enquiries ----------------
+
+@api_router.post("/enquiries")
+async def create_enquiry(request: Request):
+    body = await request.json()
+    if not body.get("name") or not body.get("requirement"):
+        raise HTTPException(400, "Name and requirement are required")
+    ip = request.client.host if request.client else "unknown"
+    recent = await db.enquiries.count_documents({
+        "ip": ip, "created_at": {"$gte": datetime.now(timezone.utc) - timedelta(hours=1)}})
+    if recent >= 20:
+        raise HTTPException(429, "Too many enquiries — please try again later")
+    doc = {"name": body["name"], "company": body.get("company", ""), "requirement": body["requirement"],
+           "budget": body.get("budget", ""), "description": body.get("description", ""),
+           "ip": ip, "status": "open", "created_at": datetime.now(timezone.utc)}
+    res = await db.enquiries.insert_one(doc)
+    for admin in await db.users.find({"role": {"$in": list(ADMIN_ROLES)}}).to_list(10):
+        await notify(admin["_id"], "enquiry", f"Platform enquiry from {body['name']}", "/admin")
+    return pub(await db.enquiries.find_one({"_id": res.inserted_id}))
+
+
+@api_router.get("/admin/enquiries")
+async def list_enquiries(user=Depends(require(*ADMIN_ROLES))):
+    items = await db.enquiries.find().sort("created_at", -1).to_list(200)
+    return [pub(i) for i in items]
+
+
+@api_router.post("/admin/enquiries/{enquiry_id}/resolve")
+async def resolve_enquiry(enquiry_id: str, user=Depends(require(*ADMIN_ROLES))):
+    res = await db.enquiries.update_one({"_id": oid(enquiry_id)},
+                                        {"$set": {"status": "resolved", "resolved_by": user["name"],
+                                                  "resolved_at": datetime.now(timezone.utc)}})
+    if not res.matched_count:
+        raise HTTPException(404, "Enquiry not found")
+    return {"ok": True}
 
 
 # ---------------- Notifications ----------------

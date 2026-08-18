@@ -15,6 +15,7 @@ const FAQS = [
   ["How is my order shipped?", "Sellers ship via third-party courier partners (Delhivery, Blue Dart, DTDC, Ekart, India Post, Shiprocket). You receive the courier name and tracking ID on your order."],
   ["How do commissions work for artists?", "Sketch charges a 10% platform fee on released payouts. GST, shipping and packaging are calculated transparently at checkout."],
   ["How do I become a seller?", "Register as an Artist, Retailer or Company, then use the Studio to upload reels, products and portfolio pieces. Content goes live after moderation."],
+  ["What is the refund policy?", "There is none — all sales are final. Your payment stays in escrow until you confirm delivery, and any dispute is handled through a support ticket before release."],
 ];
 
 export default function SupportPage() {
