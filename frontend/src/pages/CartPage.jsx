@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Minus, Plus, Trash2, ShieldCheck } from "lucide-react";
+import { Minus, Plus, Trash2, ShieldCheck, BookmarkPlus, ArrowUpToLine } from "lucide-react";
 import api, { fmtErr, inr, fileUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { PageHeader, EmptyState } from "@/components/cards";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { PageHeader, EmptyState, ProductCard } from "@/components/cards";
 
 const METHODS = [
   { value: "upi", label: "UPI" },
@@ -28,6 +28,7 @@ export function calcBreakdown(items) {
 
 export default function CartPage() {
   const [items, setItems] = useState([]);
+  const [recent, setRecent] = useState([]);
   const [address, setAddress] = useState("");
   const [method, setMethod] = useState("upi");
   const [payState, setPayState] = useState(null);
@@ -37,6 +38,7 @@ export default function CartPage() {
   const load = () => api.get("/cart").then((r) => setItems(r.data.items));
   useEffect(() => {
     load();
+    api.get("/recently-viewed").then((r) => setRecent(r.data.items)).catch(() => {});
   }, []);
 
   const setQty = async (pid, qty) => {
@@ -49,7 +51,15 @@ export default function CartPage() {
     load();
   };
 
-  const fees = calcBreakdown(items);
+  const toggleSaved = async (pid) => {
+    const { data } = await api.put(`/cart/${pid}/save-for-later`);
+    toast.success(data.saved ? "Saved for later" : "Moved to cart");
+    load();
+  };
+
+  const active = items.filter((i) => !i.saved);
+  const savedLater = items.filter((i) => i.saved);
+  const fees = calcBreakdown(active);
 
   const checkout = async () => {
     setBusy(true);
@@ -87,29 +97,22 @@ export default function CartPage() {
       ) : (
         <div className="grid lg:grid-cols-[1fr_380px] gap-12">
           <div className="space-y-4">
-            {items.map((it) => (
-              <div key={it.id} className="flex gap-4 border border-border/60 p-4" data-testid={`cart-item-${it.id}`}>
-                <img src={fileUrl(it.images?.[0])} alt={it.title} className="h-24 w-20 object-cover cursor-pointer"
-                  onClick={() => navigate(`/product/${it.id}`)} />
-                <div className="flex-1 min-w-0">
-                  <p className="font-display font-bold">{it.title}</p>
-                  <p className="text-xs text-muted-foreground">{it.seller_name}</p>
-                  <p className="font-meta text-xs mt-2">{inr(it.price)}</p>
-                  <div className="flex items-center gap-2 mt-3">
-                    <button data-testid={`qty-minus-${it.id}`} onClick={() => setQty(it.id, it.qty - 1)} className="h-7 w-7 border border-border/60 flex items-center justify-center hover:border-foreground/40">
-                      <Minus className="h-3 w-3" />
-                    </button>
-                    <span className="font-meta text-xs w-6 text-center">{it.qty}</span>
-                    <button data-testid={`qty-plus-${it.id}`} onClick={() => setQty(it.id, it.qty + 1)} className="h-7 w-7 border border-border/60 flex items-center justify-center hover:border-foreground/40">
-                      <Plus className="h-3 w-3" />
-                    </button>
-                    <button data-testid={`remove-${it.id}`} onClick={() => remove(it.id)} className="ml-auto text-muted-foreground hover:text-primary transition-colors">
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
+            {!active.length && (
+              <EmptyState testid="cart-active-empty" title="No items ready to checkout" hint="Move saved items back to cart to buy them." />
+            )}
+            {active.map((it) => (
+              <CartRow key={`active-${it.id}`} it={it} onQty={setQty} onRemove={remove} onToggleSaved={toggleSaved} navigate={navigate} />
+            ))}
+            {savedLater.length > 0 && (
+              <div className="pt-8" data-testid="saved-for-later">
+                <p className="font-meta text-[10px] text-muted-foreground mb-4">Saved for later — {savedLater.length}</p>
+                <div className="space-y-4">
+                  {savedLater.map((it) => (
+                    <CartRow key={`saved-${it.id}`} it={it} onQty={setQty} onRemove={remove} onToggleSaved={toggleSaved} navigate={navigate} saved />
+                  ))}
                 </div>
               </div>
-            ))}
+            )}
           </div>
 
           <aside className="border border-border/60 p-6 h-fit space-y-4" data-testid="cart-summary">
@@ -138,7 +141,7 @@ export default function CartPage() {
                 ))}
               </RadioGroup>
             </div>
-            <Button data-testid="checkout-pay-btn" onClick={checkout} disabled={busy} className="w-full rounded-none font-meta text-[11px] h-12">
+            <Button data-testid="checkout-pay-btn" onClick={checkout} disabled={busy || !active.length} className="w-full rounded-none font-meta text-[11px] h-12">
               {busy ? "Processing..." : `Pay ${inr(fees.total)}`}
             </Button>
             <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
@@ -148,10 +151,24 @@ export default function CartPage() {
         </div>
       )}
 
+      {recent.length > 0 && (
+        <section className="mt-16" data-testid="recently-viewed">
+          <p className="font-meta text-[11px] text-muted-foreground mb-5">Recently viewed</p>
+          <div className="flex gap-6 overflow-x-auto no-scrollbar pb-4">
+            {recent.map((p) => (
+              <div key={`recent-${p.id}`} className="w-56 shrink-0">
+                <ProductCard product={p} />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <Dialog open={!!payState} onOpenChange={() => setPayState(null)}>
         <DialogContent className="rounded-none max-w-sm" data-testid="payment-gateway-modal">
           <DialogHeader>
             <DialogTitle className="font-display">Sketch Pay — Demo Gateway</DialogTitle>
+            <DialogDescription className="sr-only">Confirm your demo payment to place the order</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="border border-border/60 p-4">
@@ -166,6 +183,41 @@ export default function CartPage() {
           </div>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function CartRow({ it, onQty, onRemove, onToggleSaved, navigate, saved }) {
+  return (
+    <div className="flex gap-4 border border-border/60 p-4" data-testid={`cart-item-${it.id}`}>
+      <img src={fileUrl(it.images?.[0])} alt={it.title} className="h-24 w-20 object-cover cursor-pointer"
+        onClick={() => navigate(`/product/${it.id}`)} />
+      <div className="flex-1 min-w-0">
+        <p className="font-display font-bold">{it.title}</p>
+        <p className="text-xs text-muted-foreground">{it.seller_name}</p>
+        <p className="font-meta text-xs mt-2">{inr(it.price)}</p>
+        <div className="flex flex-wrap items-center gap-2 mt-3">
+          {!saved && (
+            <>
+              <button data-testid={`qty-minus-${it.id}`} onClick={() => onQty(it.id, it.qty - 1)} className="h-7 w-7 border border-border/60 flex items-center justify-center hover:border-foreground/40">
+                <Minus className="h-3 w-3" />
+              </button>
+              <span className="font-meta text-xs w-6 text-center">{it.qty}</span>
+              <button data-testid={`qty-plus-${it.id}`} onClick={() => onQty(it.id, it.qty + 1)} className="h-7 w-7 border border-border/60 flex items-center justify-center hover:border-foreground/40">
+                <Plus className="h-3 w-3" />
+              </button>
+            </>
+          )}
+          <button data-testid={`save-later-${it.id}`} onClick={() => onToggleSaved(it.id)}
+            className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors ml-2">
+            {saved ? <ArrowUpToLine className="h-3.5 w-3.5" /> : <BookmarkPlus className="h-3.5 w-3.5" />}
+            {saved ? "Move to cart" : "Save for later"}
+          </button>
+          <button data-testid={`remove-${it.id}`} onClick={() => onRemove(it.id)} className="ml-auto text-muted-foreground hover:text-primary transition-colors">
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

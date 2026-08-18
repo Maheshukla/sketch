@@ -24,9 +24,16 @@ CATEGORIES = [
     {"name": "Sketch", "subcategories": ["Pencil sketches", "Portraits", "Character sketches"]},
     {"name": "Painting", "subcategories": ["Watercolor", "Acrylic", "Oil painting"]},
     {"name": "Crafting", "subcategories": ["Handmade gifts", "Paper crafts", "Resin art", "Clay art"]},
-    {"name": "Design", "subcategories": ["Illustrations", "Animations", "Motion graphics", "UI/UX design"]},
-    {"name": "Events", "subcategories": ["Wedding themes", "Birthday themes", "Festival themes", "Gift designs"]},
-    {"name": "Supplies", "subcategories": ["Paint", "Canvas", "Brushes", "Crafting tools", "Art paper", "Packaging materials", "Digital assets", "Software licenses"]},
+    {"name": "Design", "subcategories": ["Illustrations", "Motion graphics", "UI/UX design", "Branding"]},
+    {"name": "Animation", "subcategories": ["2D animation", "3D animation", "Motion graphics"]},
+    {"name": "Digital Art", "subcategories": ["Digital painting", "3D art", "Pixel art"]},
+    {"name": "Handmade", "subcategories": ["Jewelry", "Home decor", "Textiles"]},
+    {"name": "Events", "subcategories": ["Birthday themes", "Festival themes"]},
+    {"name": "Wedding", "subcategories": ["Invitations", "Decor themes", "Gift designs"]},
+    {"name": "Gifts", "subcategories": ["Personalized gifts", "Gift hampers", "Gift designs"]},
+    {"name": "Supplies", "subcategories": ["Paint", "Canvas", "Brushes", "Crafting tools", "Art paper", "Packaging materials"]},
+    {"name": "Software", "subcategories": ["Design software", "Animation software", "Creative subscriptions"]},
+    {"name": "Templates", "subcategories": ["Social media", "Print", "Branding kits", "Fonts", "Digital assets"]},
 ]
 
 
@@ -56,6 +63,13 @@ async def seed(db):
         logger.info("Seeded super admin")
     elif existing.get("role") != "super_admin":
         await db.users.update_one({"email": admin_email}, {"$set": {"role": "super_admin"}})
+
+    for c in CATEGORIES:
+        await db.categories.update_one(
+            {"name": c["name"]},
+            {"$set": {"subcategories": c["subcategories"]},
+             "$setOnInsert": {"created_at": datetime.now(timezone.utc)}},
+            upsert=True)
 
     if await db.users.count_documents({}) > 1:
         return
@@ -95,10 +109,6 @@ async def seed(db):
     })
     for uid in (ids["owner"], ids["comp_admin"], ids["comp_artist"]):
         await db.users.update_one({"_id": uid}, {"$set": {"company_id": company_id}})
-
-    await db.categories.insert_many([
-        {**c, "created_at": datetime.now(timezone.utc)} for c in CATEGORIES
-    ])
 
     now = datetime.now(timezone.utc)
     products = [

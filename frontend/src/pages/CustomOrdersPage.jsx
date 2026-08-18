@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PageHeader, EmptyState, StatusBadge } from "@/components/cards";
 
 const FLOW = ["submitted", "under_review", "sent_to_creator", "estimated", "approved", "paid", "in_progress", "delivered", "completed"];
@@ -249,6 +249,7 @@ function RequestCard({ req, user, reload }) {
         <DialogContent className="rounded-none max-w-sm" data-testid="cr-payment-modal">
           <DialogHeader>
             <DialogTitle className="font-display">Sketch Pay — Demo Gateway</DialogTitle>
+            <DialogDescription className="sr-only">Confirm your demo payment for this custom order</DialogDescription>
           </DialogHeader>
           <p className="font-display text-3xl font-black" data-testid="cr-gateway-amount">{inr(payable)}</p>
           <p className="font-meta text-[9px] text-muted-foreground">{req.payment_type} payment · held in escrow until completion</p>

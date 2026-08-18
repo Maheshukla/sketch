@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 2 focused testing of the new navigation + shopping ecosystem features. Backend: 44/44 pytest tests pass (100%) — extended from 29 in iter_1 with 15 new tests covering /products/recommended, /products/{id}/related, /products/{id}/view + /recently-viewed (auth & anon), /cart/{id}/save-for-later (including full checkout that excludes saved items, verifies only active charged & saved preserved after payment), /users/me/become-retailer (customer→retailer conversion + guardrail for non-customers), /users/me/settings (persists & readable via /auth/me), /users/{seller_id}/reviews (customer review → seller profile aggregation), /reports (product + reel + admin visibility), and saved-reels feed. The iter_1 blocker (POST /reels/{id}/comments 500) is confirmed FIXED (line 639 now builds comment_for_db with oid separately and returns the string-uid comment dict). Frontend: end-to-end Playwright drove desktop (1920x1080) + mobile (390x844) covering categories dropdown (13 items), sticky CategoryBar (14 pills with active state), centered search, product detail → related products rail, cart save-for-later + recently-viewed rail, profile 6-tab layout with ?tab= deep-link, settings/saved pages, reels report button, mobile hamburger sheet with all menu items and 13 expanded categories. All primary UX passed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/users/{id}/reviews", "issue": "Fetches up to 500 products for a seller and iterates all reviews in Python — no pagination, no created_at index. Scales poorly beyond ~50 products."},
+      {"endpoint": "POST /api/products/{id}/view", "issue": "Anonymous view increments views counter but silently swallows auth errors; if a valid session cookie is passed but expired, the exception is caught and the client gets ok:true rather than any refresh signal. Minor observability gap."},
+      {"endpoint": "GET /api/products/recommended", "issue": "Sorts by `sales` field which is only set on physical stock deductions at pay-time — digital products & new listings with sales=0 tie-break arbitrarily. Consider blending recency or views."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CartPage", "issue": "React console warning: 'Encountered two children with the same key' — same product id used as key across saved-for-later list and recently-viewed rail (or between saved and active sections after quick toggles). Namespace the keys (e.g. `saved-${it.id}`, `recent-${p.id}`) to silence and prevent DOM churn.", "selector": "[data-testid=cart-page]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Reels", "issues": ["Seeded reels with placeholder media_url='http://x/img.png' produce Mixed-Content upgrade attempts and ERR_NAME_NOT_RESOLVED — still no graceful fallback (carry-over from iter_1). Consider skipping/hiding reels with broken media or default poster."]},
+      {"screen": "Dialog (payment gateway + report)", "issues": ["Radix Dialog console warning: 'Missing Description or aria-describedby' — add <DialogDescription> or aria-describedby to satisfy a11y."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(LOW) CartPage: namespace React keys for saved-for-later list and recently-viewed rail to eliminate duplicate-key warning.",
+    "(LOW) Add DialogDescription to payment gateway modal and report dialog for a11y (Radix warns in console).",
+    "(LOW / carry-over) Add a fallback poster or filter for reels/products with invalid media URLs so `http://x/img.png` no longer produces mixed-content / DNS errors on the live UI.",
+    "(OPT) Improve /products/recommended sort to blend views + recency instead of raw sales (many products at sales=0)."
+  ],
+  "critical_code_review_comments": [
+    "server.py still 1512 lines — approaching a hard split point; extract routers per domain (products, cart, orders, custom_requests, admin, reports).",
+    "/api/users/me/settings accepts arbitrary JSON body and blindly $sets it under `settings` — no whitelist or Pydantic validation, meaning a caller can write unbounded nested data (potential storage abuse). Constrain to known keys (theme, notifications, courier_preference, privacy).",
+    "GET /api/users/{id}/reviews iterates .reviews in Python across up to 500 product docs. If reviews are hot, denormalize into a `reviews` collection with `seller_id` index.",
+    "POST /api/reports has no rate limiting and no validation that `target_id` exists — a spammer can create unlimited reports referencing bogus targets. Add per-user throttling and target existence check.",
+    "POST /api/products/{id}/view increments views on every hit — no debouncing per user/session, so a client hot-reloading a detail page will inflate view counts.",
+    "toggle_save_for_later reads `item.get('saved')` twice around the update; if two requests race the flip is not atomic — use $set with $bit or a conditional update. Minor for demo scale."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (44/44)", "frontend": "All 11 UI checks passed (desktop nav categories, sticky CategoryBar, centered search, product related rail, cart save-for-later + recently-viewed, profile tabs & deep-link, settings, saved reels, mobile hamburger + expanded categories, reel report). One minor React warning."},
+  "test_credentials": "All accounts in /app/memory/test_credentials.md verified working (customer/aarav/meera/admin/super).",
+  "seed_data_creation": "Suite creates one TEST_widget product, one TEST_reel, one TEST_ br_* retailer user (via become-retailer), one TEST_sup_* support user, one review 'TEST_great' on meera's first product, plus test reports on a product and reel. All TEST_ prefixed — cleanup not implemented.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend regression suite at /app/backend/tests/backend_test.py runs in ~12s with pytest-xdist (2 workers). All 44 tests currently pass. The iter_1 reels comment ObjectId bug is fixed. Cart tests intentionally leave a saved-for-later item behind on customer@sketch.app — consider clearing before re-running or add cleanup fixture. Frontend UI: use data-testid namespace `nav-*`/`m-*`/`cat-*`/`profile-tab-*`; category bar has exactly 14 pills (All + 13); mobile menu is a shadcn Sheet keyed on data-testid=mobile-menu; product detail page must have data-testid=related-products for the rail; cart page has data-testid=recently-viewed and data-testid=saved-for-later sections.",
+  "rca_of_the_issue": "React duplicate-key warning on /cart originates because CartPage renders (a) active items, (b) saved-for-later items, and (c) recently-viewed rail — each list uses the raw product id as key. When a product appears in more than one list simultaneously (e.g. same product recently viewed AND in cart), React sees duplicate keys across the CartPage subtree traversal. Fix: prefix keys per section, e.g. `active-${it.id}`, `saved-${it.id}`, `recent-${p.id}`."
+}

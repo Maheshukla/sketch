@@ -349,6 +349,9 @@ async def get_profile(user_id: str, request: Request):
     u["is_following"] = bool(me and oid(me["id"]) in user.get("followers", []))
     u.pop("followers", None)
     u.pop("following", None)
+    await db.users.update_one({"_id": user["_id"]}, {"$inc": {"profile_views": 1}})
+    u["orders_completed"] = await db.orders.count_documents({"items.seller_id": user["_id"], "status": "delivered"})
+    u["portfolio_views"] = user.get("profile_views", 0) + 1
     if user.get("company_id"):
         comp = await db.companies.find_one({"_id": user["company_id"]})
         if comp:
@@ -371,6 +374,40 @@ async def toggle_follow(user_id: str, user=Depends(current_user)):
     await db.users.update_one({"_id": me_id}, {"$addToSet": {"following": target}})
     await notify(target, "follow", f"{user['name']} started following you", f"/profile/{user['id']}")
     return {"following": True}
+
+
+@api_router.post("/users/me/become-retailer")
+async def become_retailer(user=Depends(current_user)):
+    if user["role"] != "customer":
+        raise HTTPException(400, "Only customer accounts can convert to retailer")
+    await db.users.update_one({"_id": oid(user["id"])}, {"$set": {"role": "retailer"}})
+    return {"ok": True, "role": "retailer"}
+
+
+ALLOWED_SETTINGS = {"private_profile", "show_activity", "notify_orders", "notify_social",
+                    "notify_marketing", "default_payment", "default_address",
+                    "notifications", "theme", "courier_preference", "privacy"}
+
+
+@api_router.put("/users/me/settings")
+async def update_settings(request: Request, user=Depends(current_user)):
+    body = await request.json()
+    clean = {k: v for k, v in body.items() if k in ALLOWED_SETTINGS}
+    await db.users.update_one({"_id": oid(user["id"])}, {"$set": {"settings": clean}})
+    return {"ok": True}
+
+
+@api_router.get("/users/{user_id}/reviews")
+async def user_reviews(user_id: str):
+    prods = await db.products.find({"seller_id": oid(user_id)}).to_list(500)
+    out = []
+    for p in prods:
+        for r in p.get("reviews", []):
+            uid = r.get("user_id")
+            out.append({**r, "user_id": str(uid) if isinstance(uid, ObjectId) else uid,
+                        "product_title": p["title"], "product_id": str(p["_id"])})
+    out.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+    return out[:50]
 
 
 @api_router.get("/creators")
@@ -675,6 +712,51 @@ async def list_products(q: str = "", category: str = "", product_type: str = "",
     return [pub(i) for i in items]
 
 
+@api_router.get("/products/recommended")
+async def recommended_products():
+    items = await db.products.find({"status": "approved"}).sort("sales", -1).limit(8).to_list(8)
+    return [pub(i) for i in items]
+
+
+@api_router.get("/products/{product_id}/related")
+async def related_products(product_id: str):
+    prod = await db.products.find_one({"_id": oid(product_id)})
+    if not prod:
+        raise HTTPException(404, "Product not found")
+    items = await db.products.find(
+        {"status": "approved", "category": prod["category"], "_id": {"$ne": prod["_id"]}}
+    ).limit(8).to_list(8)
+    return [pub(i) for i in items]
+
+
+@api_router.post("/products/{product_id}/view")
+async def track_product_view(product_id: str, request: Request):
+    pid = oid(product_id)
+    await db.products.update_one({"_id": pid}, {"$inc": {"views": 1}})
+    try:
+        me = await get_current_user(request, db)
+    except HTTPException:
+        return {"ok": True}
+    uid = oid(me["id"])
+    await db.recently_viewed.update_one({"user_id": uid}, {"$pull": {"items": {"product_id": pid}}}, upsert=True)
+    await db.recently_viewed.update_one(
+        {"user_id": uid},
+        {"$push": {"items": {"$each": [{"product_id": pid, "at": datetime.now(timezone.utc)}], "$slice": -20}}},
+        upsert=True)
+    return {"ok": True}
+
+
+@api_router.get("/recently-viewed")
+async def get_recently_viewed(user=Depends(current_user)):
+    rv = await db.recently_viewed.find_one({"user_id": oid(user["id"])})
+    items = []
+    for entry in reversed((rv or {}).get("items", [])):
+        prod = await db.products.find_one({"_id": entry["product_id"]})
+        if prod:
+            items.append(pub(prod))
+    return {"items": items}
+
+
 @api_router.get("/products/{product_id}")
 async def get_product(product_id: str):
     prod = await db.products.find_one({"_id": oid(product_id)})
@@ -735,7 +817,7 @@ async def get_cart(user=Depends(current_user)):
         for it in cart.get("items", []):
             prod = await db.products.find_one({"_id": it["product_id"]})
             if prod:
-                items.append({**pub(prod), "qty": it["qty"]})
+                items.append({**pub(prod), "qty": it["qty"], "saved": it.get("saved", False)})
     return {"items": items}
 
 
@@ -774,6 +856,18 @@ async def remove_cart_item(product_id: str, user=Depends(current_user)):
     await db.carts.update_one({"user_id": oid(user["id"])},
                               {"$pull": {"items": {"product_id": oid(product_id)}}})
     return {"ok": True}
+
+
+@api_router.put("/cart/{product_id}/save-for-later")
+async def toggle_save_for_later(product_id: str, user=Depends(current_user)):
+    pid = oid(product_id)
+    cart = await db.carts.find_one({"user_id": oid(user["id"]), "items.product_id": pid})
+    if not cart:
+        raise HTTPException(404, "Item not in cart")
+    item = next(i for i in cart["items"] if i["product_id"] == pid)
+    await db.carts.update_one({"user_id": oid(user["id"]), "items.product_id": pid},
+                              {"$set": {"items.$.saved": not item.get("saved", False)}})
+    return {"saved": not item.get("saved", False)}
 
 
 @api_router.get("/wishlist")
@@ -857,6 +951,8 @@ async def checkout(request: Request, user=Depends(current_user)):
     subtotal = 0.0
     has_physical = False
     for it in cart["items"]:
+        if it.get("saved"):
+            continue
         prod = await db.products.find_one({"_id": it["product_id"]})
         if not prod or prod["status"] != "approved":
             continue
@@ -896,7 +992,7 @@ async def pay_order(order_id: str, request: Request, user=Depends(current_user))
                                      {"$inc": {"stock": -it["qty"] if it["product_type"] == "physical" else 0,
                                                "sales": it["qty"]}})
     await db.orders.update_one({"_id": order["_id"]}, {"$set": {"status": "placed", "paid_at": datetime.now(timezone.utc)}})
-    await db.carts.delete_one({"user_id": oid(user["id"])})
+    await db.carts.update_one({"user_id": oid(user["id"])}, {"$pull": {"items": {"saved": {"$ne": True}}}})
     for sid in {str(i["seller_id"]) for i in order["items"]}:
         await notify(sid, "order", f"New order received from {user['name']}", "/orders")
     return pub(await db.orders.find_one({"_id": order["_id"]}))
@@ -1231,6 +1327,14 @@ async def read_notifications(user=Depends(current_user)):
 @api_router.post("/reports")
 async def create_report(request: Request, user=Depends(current_user)):
     body = await request.json()
+    if body["target_type"] == "reel":
+        exists = await db.reels.find_one({"_id": oid(body["target_id"])})
+    elif body["target_type"] == "product":
+        exists = await db.products.find_one({"_id": oid(body["target_id"])})
+    else:
+        exists = await db.users.find_one({"_id": oid(body["target_id"])})
+    if not exists:
+        raise HTTPException(404, "Report target not found")
     doc = {"reporter_id": oid(user["id"]), "reporter_name": user["name"],
            "target_type": body["target_type"], "target_id": body["target_id"],
            "reason": body["reason"], "status": "open",

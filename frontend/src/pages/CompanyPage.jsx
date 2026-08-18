@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Building2, Trash2, UserPlus } from "lucide-react";
+import { Building2, LayoutDashboard, Package, Settings, Sparkles, Trash2, UserPlus } from "lucide-react";
 import api, { fmtErr } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ import { PageHeader, EmptyState } from "@/components/cards";
 
 export default function CompanyPage() {
   const { user, refresh } = useAuth();
+  const navigate = useNavigate();
   const [company, setCompany] = useState(undefined);
   const [create, setCreate] = useState({ name: "", description: "" });
   const [member, setMember] = useState({ email: "", role: "artist" });
@@ -90,6 +92,21 @@ export default function CompanyPage() {
   return (
     <div className="max-w-[1000px] mx-auto px-4 sm:px-8 py-12" data-testid="company-page">
       <PageHeader kicker="Company" title={company.name} sub={company.description} />
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-10" data-testid="company-quicklinks">
+        {[
+          { icon: Sparkles, label: "Projects & requests", to: "/custom-orders", tid: "ql-projects" },
+          { icon: Package, label: "Order management", to: "/orders", tid: "ql-orders" },
+          { icon: LayoutDashboard, label: "Revenue & analytics", to: "/dashboard", tid: "ql-revenue" },
+          { icon: Settings, label: "Settings", to: "/settings", tid: "ql-settings" },
+        ].map((l) => (
+          <button key={l.tid} data-testid={l.tid} onClick={() => navigate(l.to)}
+            className="border border-border/60 p-4 text-left hover:border-foreground/40 transition-colors group">
+            <l.icon className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors mb-3" />
+            <p className="font-display font-bold text-sm">{l.label}</p>
+          </button>
+        ))}
+      </div>
 
       <div className="grid lg:grid-cols-[1fr_320px] gap-10">
         <div className="space-y-3" data-testid="team-list">

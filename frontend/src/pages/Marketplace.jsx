@@ -2,11 +2,10 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "@/lib/api";
 import { ProductCard, PageHeader, EmptyState } from "@/components/cards";
+import CategoryBar from "@/components/CategoryBar";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-
-const CATS = ["Sketch", "Painting", "Crafting", "Design", "Events", "Supplies"];
 
 export default function Marketplace() {
   const [params, setParams] = useSearchParams();
@@ -42,27 +41,12 @@ export default function Marketplace() {
   return (
     <div className="max-w-[1600px] mx-auto px-4 sm:px-8 py-12" data-testid="marketplace-page">
       <PageHeader kicker="Marketplace" title="Shop the marketplace."
-        sub="Original artwork, handmade craft, digital assets and studio-grade supplies." />
+        sub="Original artwork, handmade craft, digital assets, templates and studio-grade supplies." />
 
-      <div className="grid lg:grid-cols-[240px_1fr] gap-10">
+      <CategoryBar value={category} onChange={(v) => setParam("category", v)} />
+
+      <div className="grid lg:grid-cols-[240px_1fr] gap-10 mt-10">
         <aside className="space-y-8" data-testid="marketplace-filters">
-          <div>
-            <Label className="font-meta text-[10px] text-muted-foreground">Category</Label>
-            <div className="mt-3 space-y-1">
-              {["", ...CATS].map((c) => (
-                <button
-                  key={c || "all"}
-                  data-testid={`filter-cat-${(c || "all").toLowerCase()}`}
-                  onClick={() => setParam("category", c)}
-                  className={`block w-full text-left px-3 py-2 text-sm transition-colors ${
-                    category === c ? "bg-foreground text-background" : "hover:bg-secondary"
-                  }`}
-                >
-                  {c || "All categories"}
-                </button>
-              ))}
-            </div>
-          </div>
           <div>
             <Label className="font-meta text-[10px] text-muted-foreground">Type</Label>
             <Select value={ptype || "all"} onValueChange={(v) => setParam("type", v === "all" ? "" : v)}>
@@ -93,7 +77,7 @@ export default function Marketplace() {
           {loading ? (
             <p className="font-meta text-xs text-muted-foreground">Loading...</p>
           ) : products.length ? (
-            <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
               {products.map((p) => (
                 <ProductCard key={p.id} product={p} />
               ))}

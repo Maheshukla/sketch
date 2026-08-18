@@ -33,6 +33,18 @@ A SaaS platform combining Instagram (reels/social), Behance (portfolios), Etsy (
 - **Payments:** demo gateway, always succeeds. Next: real Razorpay keys (RAZORPAY_KEY_ID/SECRET + webhook) — playbook already researched.
 - **SMS OTP:** OTP returned in API response. Next: Twilio/MSG91.
 
+## Iteration 2 — Ecosystem redesign (2026-08-18)
+- Navigation rebuilt: desktop (Categories dropdown, Discover/Reels/Marketplace, centered search, wishlist/cart/notifications/profile) + mobile hamburger Sheet with full role-aware menu (incl. My Portfolio/Reels/Products/Custom Requests, Create Company, Become a Retailer, Logout)
+- Sticky horizontally-scrollable category bar (13 categories) on Discover + Marketplace
+- Amazon-style product cards: hover second-image swap, rating+count, price, shipping/availability, wishlist, add-to-cart, buy-now, hover "Request custom version"
+- Shopping: save-for-later (excluded from checkout, survives payment), recently-viewed rail, related products, recommended rail on Discover
+- Profile rebuilt (Instagram+Behance): followers/following/orders-completed/profile-views stats, tabs Posts/Reels/Portfolio/Products/Reviews/About, ?tab= deep links
+- Settings page: account, privacy, notifications, payments, shipping (courier preference), theme, security — persisted via whitelisted /users/me/settings
+- Saved reels page (/saved); customer dashboard hub; company quick links
+- Report dialog (inappropriate/copyright/spam) on reels + products with target validation
+- New endpoints: /products/recommended, /products/{id}/related, /products/{id}/view, /recently-viewed, /cart/{id}/save-for-later, /users/me/become-retailer, /users/me/settings, /users/{id}/reviews
+- Testing: iteration_2 — 44/44 backend tests pass, all 11 UI checks pass (desktop + mobile)
+
 ## Backlog
 - P0: Real Razorpay + webhook verification; real SMS OTP provider
 - P1: Balance payment for advance-paid custom orders; refunds/disputes flow; live chat; reel video transcoding; saved-reels page; sales analytics aggregation pipeline

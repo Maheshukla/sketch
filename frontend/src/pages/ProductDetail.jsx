@@ -6,10 +6,10 @@ import api, { fmtErr, inr, fileUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { CustomRequestDialog } from "@/pages/ReelsPage";
-import { StatusBadge } from "@/components/cards";
+import { StatusBadge, ProductCard, ReportDialog } from "@/components/cards";
 
 export default function ProductDetail() {
   const { id } = useParams();
@@ -21,11 +21,16 @@ export default function ProductDetail() {
   const [zoomPos, setZoomPos] = useState("50% 50%");
   const [review, setReview] = useState({ rating: 5, text: "" });
   const [showCustom, setShowCustom] = useState(false);
+  const [showReport, setShowReport] = useState(false);
+  const [related, setRelated] = useState([]);
   const imgRef = useRef(null);
 
   const load = () => api.get(`/products/${id}`).then((r) => setProduct(r.data)).catch(() => navigate("/marketplace"));
   useEffect(() => {
+    setActiveImg(0);
     load();
+    api.post(`/products/${id}/view`).catch(() => {});
+    api.get(`/products/${id}/related`).then((r) => setRelated(r.data)).catch(() => {});
   }, [id]);
 
   if (!product) return <div className="min-h-screen" />;
@@ -162,8 +167,21 @@ export default function ProductDetail() {
               </Button>
             </div>
           </div>
+          <button data-testid="report-product" onClick={() => setShowReport(true)}
+            className="mt-3 text-[11px] text-muted-foreground hover:text-primary transition-colors">
+            Report this listing
+          </button>
         </div>
       </div>
+
+      {related.length > 0 && (
+        <section className="mt-20" data-testid="related-products">
+          <h2 className="font-display text-2xl font-black tracking-tight mb-6">Related work</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            {related.map((p) => <ProductCard key={p.id} product={p} />)}
+          </div>
+        </section>
+      )}
 
       <section className="mt-20 max-w-3xl">
         <h2 className="font-display text-2xl font-black tracking-tight mb-6">Reviews</h2>
@@ -197,6 +215,8 @@ export default function ProductDetail() {
 
       <Dialog open={zoomOpen} onOpenChange={setZoomOpen}>
         <DialogContent className="rounded-none max-w-5xl p-0 border-none bg-black" data-testid="zoom-dialog">
+          <DialogTitle className="sr-only">{product.title}</DialogTitle>
+          <DialogDescription className="sr-only">Full-screen artwork preview</DialogDescription>
           <img src={fileUrl(product.images?.[activeImg])} alt={product.title} className="w-full max-h-[85vh] object-contain" />
         </DialogContent>
       </Dialog>
@@ -204,6 +224,7 @@ export default function ProductDetail() {
       <CustomRequestDialog open={showCustom} onClose={() => setShowCustom(false)}
         targetId={product.seller_id} targetType={product.seller_type === "company" ? "company" : "user"}
         targetName={product.seller_name} />
+      <ReportDialog open={showReport} onClose={() => setShowReport(false)} targetType="product" targetId={product.id} />
     </div>
   );
 }

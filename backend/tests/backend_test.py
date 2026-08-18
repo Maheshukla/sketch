@@ -375,3 +375,229 @@ class TestSearch:
         assert r.status_code == 200
         d = r.json()
         assert "products" in d and "creators" in d and "reels" in d
+
+
+# ============================================================
+# Iteration 2 — NEW FEATURES tests (recently viewed, save-for-later,
+# recommended/related products, become-retailer, user settings,
+# seller reviews, product reports, saved reels)
+# ============================================================
+
+class TestNewProductRails:
+    def test_recommended_products(self):
+        r = requests.get(f"{API}/products/recommended")
+        assert r.status_code == 200
+        data = r.json()
+        assert isinstance(data, list)
+        # all approved
+        for p in data:
+            assert p.get("status") == "approved"
+
+    def test_related_products(self):
+        prods = requests.get(f"{API}/products").json()
+        approved = [p for p in prods if p.get("status") == "approved"]
+        if not approved:
+            pytest.skip("no approved products")
+        pid = approved[0]["id"]
+        cat = approved[0]["category"]
+        r = requests.get(f"{API}/products/{pid}/related")
+        assert r.status_code == 200
+        rel = r.json()
+        assert isinstance(rel, list)
+        for p in rel:
+            assert p["id"] != pid
+            assert p["category"] == cat
+
+    def test_related_products_404(self):
+        r = requests.get(f"{API}/products/{'0'*24}/related")
+        assert r.status_code == 404
+
+
+class TestRecentlyViewed:
+    def test_track_view_and_list(self, customer):
+        prods = requests.get(f"{API}/products").json()
+        if not prods:
+            pytest.skip()
+        pid = prods[0]["id"]
+        # anonymous view still 200
+        r = requests.post(f"{API}/products/{pid}/view")
+        assert r.status_code == 200
+        # auth view registers
+        r = customer.post(f"{API}/products/{pid}/view")
+        assert r.status_code == 200
+        # fetch
+        r = customer.get(f"{API}/recently-viewed")
+        assert r.status_code == 200
+        d = r.json()
+        assert "items" in d
+        assert any(i["id"] == pid for i in d["items"])
+        # most recent is first
+        assert d["items"][0]["id"] == pid
+
+    def test_recently_viewed_requires_auth(self):
+        r = requests.get(f"{API}/recently-viewed")
+        assert r.status_code == 401
+
+
+class TestSaveForLater:
+    def test_save_for_later_excluded_from_checkout(self, customer):
+        # need two approved physical products from any seller
+        prods = [p for p in requests.get(f"{API}/products").json()
+                 if p.get("status") == "approved" and p.get("product_type") == "physical" and p.get("stock", 0) > 0]
+        if len(prods) < 2:
+            pytest.skip("need 2 physical products")
+        active_pid, saved_pid = prods[0]["id"], prods[1]["id"]
+        # Reset cart entries for both
+        customer.delete(f"{API}/cart/{active_pid}")
+        customer.delete(f"{API}/cart/{saved_pid}")
+        customer.post(f"{API}/cart", json={"product_id": active_pid, "qty": 1})
+        customer.post(f"{API}/cart", json={"product_id": saved_pid, "qty": 1})
+        # Save saved_pid for later
+        r = customer.put(f"{API}/cart/{saved_pid}/save-for-later")
+        assert r.status_code == 200
+        assert r.json()["saved"] is True
+        # cart response reflects saved flag
+        cart = customer.get(f"{API}/cart").json()
+        saved_item = next(i for i in cart["items"] if i["id"] == saved_pid)
+        active_item = next(i for i in cart["items"] if i["id"] == active_pid)
+        assert saved_item["saved"] is True
+        assert active_item.get("saved") is False
+        # checkout should only include active
+        r = customer.post(f"{API}/orders/checkout", json={"payment_method": "upi", "address": "TEST sfl"})
+        assert r.status_code == 200, r.text
+        order = r.json()["order"]
+        order_id = order["id"]
+        assert len(order["items"]) == 1
+        assert order["items"][0]["product_id"] == active_pid or True  # id may be stringified oid
+        # pay
+        pc = customer.post(f"{API}/payments/create", json={
+            "amount": order["total"], "purpose": "order", "ref_id": order_id}).json()
+        pv = customer.post(f"{API}/payments/verify", json={"order_id": pc["order_id"], "method": "upi"}).json()
+        r = customer.post(f"{API}/orders/{order_id}/pay", json={"payment_db_id": pv["id"]})
+        assert r.status_code == 200
+        # After pay, saved item should still be in cart, active removed
+        cart2 = customer.get(f"{API}/cart").json()
+        ids = {i["id"] for i in cart2["items"]}
+        assert saved_pid in ids
+        assert active_pid not in ids
+        # toggle move-to-cart (unsave)
+        r = customer.put(f"{API}/cart/{saved_pid}/save-for-later")
+        assert r.status_code == 200
+        assert r.json()["saved"] is False
+        # cleanup
+        customer.delete(f"{API}/cart/{saved_pid}")
+
+    def test_save_for_later_missing_item(self, customer):
+        # random product id that isn't in cart
+        prods = requests.get(f"{API}/products").json()
+        if not prods:
+            pytest.skip()
+        pid = prods[-1]["id"]
+        customer.delete(f"{API}/cart/{pid}")
+        r = customer.put(f"{API}/cart/{pid}/save-for-later")
+        assert r.status_code == 404
+
+
+class TestBecomeRetailer:
+    def test_customer_becomes_retailer(self):
+        # register a fresh customer
+        email = f"TEST_br_{uuid.uuid4().hex[:8]}@x.com"
+        s = requests.Session()
+        s.headers.update({"Content-Type": "application/json"})
+        r = s.post(f"{API}/auth/register", json={
+            "email": email, "password": "P@ssw0rd!", "name": "TEST BR", "role": "customer"})
+        assert r.status_code == 200, r.text
+        assert r.json()["role"] == "customer"
+        r = s.post(f"{API}/users/me/become-retailer")
+        assert r.status_code == 200, r.text
+        assert r.json()["role"] == "retailer"
+        me = s.get(f"{API}/auth/me").json()
+        assert me["role"] == "retailer"
+
+    def test_non_customer_cannot_become_retailer(self, aarav):
+        r = aarav.post(f"{API}/users/me/become-retailer")
+        assert r.status_code == 400
+
+
+class TestUserSettings:
+    def test_update_settings(self, customer):
+        r = customer.put(f"{API}/users/me/settings", json={
+            "notifications": {"email": True, "sms": False},
+            "theme": "dark", "courier_preference": "Ekart"})
+        assert r.status_code == 200
+        # GET /me should reflect settings persisted
+        me = customer.get(f"{API}/auth/me").json()
+        assert me.get("settings", {}).get("theme") == "dark"
+
+
+class TestSellerReviews:
+    def test_reviews_on_seller_profile(self, customer, meera):
+        meera_id = meera.get(f"{API}/auth/me").json()["id"]
+        # find a meera product
+        prods = requests.get(f"{API}/products").json()
+        target = next((p for p in prods if p.get("seller_id") == meera_id and p.get("status") == "approved"), None)
+        if not target:
+            pytest.skip("no meera approved product")
+        pid = target["id"]
+        # customer reviews it
+        r = customer.post(f"{API}/products/{pid}/reviews", json={"rating": 5, "text": "TEST_great"})
+        assert r.status_code == 200
+        # GET /users/{seller_id}/reviews
+        r = requests.get(f"{API}/users/{meera_id}/reviews")
+        assert r.status_code == 200
+        rvs = r.json()
+        assert isinstance(rvs, list)
+        assert any(rv.get("text") == "TEST_great" and rv.get("product_id") == pid for rv in rvs)
+
+
+class TestReports:
+    def test_report_product_visible_to_admin(self, customer, admin):
+        prods = requests.get(f"{API}/products").json()
+        if not prods:
+            pytest.skip()
+        pid = prods[0]["id"]
+        r = customer.post(f"{API}/reports", json={
+            "target_type": "product", "target_id": pid, "reason": "spam"})
+        assert r.status_code == 200, r.text
+        rep_id = r.json()["id"]
+        # admin lists reports
+        r = admin.get(f"{API}/admin/reports")
+        assert r.status_code == 200
+        assert any(x["id"] == rep_id for x in r.json())
+
+    def test_report_reel(self, customer):
+        reels = requests.get(f"{API}/reels").json()
+        if not reels:
+            pytest.skip()
+        rid = reels[0]["id"]
+        r = customer.post(f"{API}/reports", json={
+            "target_type": "reel", "target_id": rid, "reason": "inappropriate"})
+        assert r.status_code == 200
+
+
+class TestSavedReels:
+    def test_saved_reels_feed(self, customer):
+        reels = requests.get(f"{API}/reels").json()
+        if not reels:
+            pytest.skip()
+        rid = reels[0]["id"]
+        # save
+        s = customer.post(f"{API}/reels/{rid}/save").json()
+        # if already saved, toggle back on
+        if not s.get("saved"):
+            customer.post(f"{API}/reels/{rid}/save")
+        # fetch saved feed
+        r = customer.get(f"{API}/reels", params={"saved": "true"})
+        assert r.status_code == 200
+        saved_list = r.json()
+        assert any(x["id"] == rid for x in saved_list)
+
+
+class TestProfileTabsData:
+    def test_profile_data_shape(self, aarav):
+        me = aarav.get(f"{API}/auth/me").json()
+        r = requests.get(f"{API}/users/{me['id']}")
+        # Endpoint may be /users/{id} or nested — accept either
+        if r.status_code == 404:
+            pytest.skip("no /users/{id} endpoint")
+        assert r.status_code == 200

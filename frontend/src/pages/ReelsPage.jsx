@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Bookmark, Heart, MessageCircle, Send, ShoppingBag, Sparkles, UserPlus, X, Zap } from "lucide-react";
+import { Bookmark, Flag, Heart, MessageCircle, Send, ShoppingBag, Sparkles, UserPlus, X, Zap } from "lucide-react";
 import api, { fmtErr, inr, fileUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { ReportDialog } from "@/components/cards";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -42,6 +43,8 @@ function ReelItem({ reel, user, patch, reload }) {
   const [comments, setComments] = useState([]);
   const [commentText, setCommentText] = useState("");
   const [showCustom, setShowCustom] = useState(false);
+  const [showReport, setShowReport] = useState(false);
+  const [dead, setDead] = useState(false);
   const videoRef = useRef(null);
 
   const needAuth = () => {
@@ -117,14 +120,17 @@ function ReelItem({ reel, user, patch, reload }) {
       navigate("/cart");
     });
 
+  if (dead) return null;
+
   return (
     <section className="relative h-[calc(100vh-4rem)] w-full flex items-center justify-center overflow-hidden" data-testid={`reel-${reel.id}`}>
       <div className="absolute inset-0">
         {reel.media_type === "video" ? (
-          <video ref={videoRef} src={fileUrl(reel.media_url)} className="h-full w-full object-cover" autoPlay loop muted playsInline />
+          <video ref={videoRef} src={fileUrl(reel.media_url)} className="h-full w-full object-cover" autoPlay loop muted playsInline
+            onError={() => setDead(true)} />
         ) : (
           <img src={fileUrl(reel.media_url)} alt={reel.caption} className="h-full w-full object-cover kenburns"
-            onError={(e) => { e.currentTarget.style.display = "none"; }} />
+            onError={() => setDead(true)} />
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
       </div>
@@ -170,12 +176,14 @@ function ReelItem({ reel, user, patch, reload }) {
           <RailBtn testid={`reel-follow-${reel.id}`} onClick={follow} icon={<UserPlus className="h-6 w-6" />} />
         )}
         <RailBtn testid={`reel-custom-${reel.id}`} onClick={() => (needAuth() ? null : setShowCustom(true))} icon={<Sparkles className="h-6 w-6 text-primary" />} />
+        <RailBtn testid={`reel-report-${reel.id}`} onClick={() => (needAuth() ? null : setShowReport(true))} icon={<Flag className="h-5 w-5" />} />
       </div>
 
       <Dialog open={showComments} onOpenChange={setShowComments}>
         <DialogContent className="rounded-none max-w-md" data-testid={`comments-dialog-${reel.id}`}>
           <DialogHeader>
             <DialogTitle className="font-display">Comments</DialogTitle>
+            <DialogDescription className="sr-only">Read and post comments on this reel</DialogDescription>
           </DialogHeader>
           <div className="max-h-80 overflow-y-auto space-y-4 py-2">
             {comments.map((c) => (
@@ -197,6 +205,7 @@ function ReelItem({ reel, user, patch, reload }) {
       <CustomRequestDialog open={showCustom} onClose={() => setShowCustom(false)}
         targetId={reel.creator_id} targetType={reel.creator_type === "company" ? "company" : "user"}
         targetName={reel.creator_name} />
+      <ReportDialog open={showReport} onClose={() => setShowReport(false)} targetType="reel" targetId={reel.id} />
     </section>
   );
 }
@@ -238,6 +247,7 @@ export function CustomRequestDialog({ open, onClose, targetId, targetType, targe
       <DialogContent className="rounded-none max-w-lg" data-testid="custom-request-dialog">
         <DialogHeader>
           <DialogTitle className="font-display">Request custom work from {targetName}</DialogTitle>
+          <DialogDescription className="sr-only">Submit a custom artwork commission request</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div>

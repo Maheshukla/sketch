@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Clapperboard, ImagePlus, PackagePlus, Trash2, Upload } from "lucide-react";
 import api, { fmtErr, inr, fileUrl } from "@/lib/api";
@@ -55,6 +56,8 @@ function FilePicker({ onUploaded, testid, accept = "image/*,video/mp4" }) {
 
 export default function StudioPage() {
   const { user } = useAuth();
+  const [params, setParams] = useSearchParams();
+  const tab = params.get("tab") || "reel";
   const [myProducts, setMyProducts] = useState([]);
   const [reel, setReel] = useState({ caption: "", media_url: "", media_type: "image", product_id: "" });
   const [product, setProduct] = useState({ title: "", description: "", category: "Painting", subcategory: "Watercolor", price: "", stock: 1, product_type: "physical", images: [] });
@@ -118,7 +121,7 @@ export default function StudioPage() {
       <PageHeader kicker="Creator Studio" title="Publish & manage."
         sub="Upload reels, list products and curate your portfolio. New content is reviewed by moderators before going live." />
 
-      <Tabs defaultValue="reel">
+      <Tabs value={tab} onValueChange={(v) => setParams({ tab: v })}>
         <TabsList className="rounded-none mb-8">
           <TabsTrigger value="reel" data-testid="studio-tab-reel" className="rounded-none font-meta text-[10px]"><Clapperboard className="h-3.5 w-3.5 mr-2" />Reel / video</TabsTrigger>
           <TabsTrigger value="product" data-testid="studio-tab-product" className="rounded-none font-meta text-[10px]"><PackagePlus className="h-3.5 w-3.5 mr-2" />Product</TabsTrigger>
