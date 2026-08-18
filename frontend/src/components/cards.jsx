@@ -60,6 +60,8 @@ export function ProductCard({ product, onChange }) {
 
   const img = hover && product.images?.[1] ? product.images[1] : product.images?.[0];
   const inStock = product.product_type !== "physical" || product.stock > 0;
+  const disc = product.discount_pct || 0;
+  const finalPrice = disc ? Math.round(product.price * (1 - disc / 100)) : product.price;
 
   return (
     <div
@@ -67,7 +69,7 @@ export function ProductCard({ product, onChange }) {
       onClick={() => navigate(`/product/${product.id}`)}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      className="group cursor-pointer border border-border/60 bg-card flex flex-col"
+      className="card-lift group cursor-pointer border border-border/60 bg-card flex flex-col"
     >
       <div className="relative overflow-hidden aspect-square">
         <img
@@ -82,11 +84,18 @@ export function ProductCard({ product, onChange }) {
         >
           <Heart className="h-4 w-4" />
         </button>
-        {product.product_type !== "physical" && (
-          <span className="absolute top-3 left-3 bg-black/60 backdrop-blur-md text-white font-meta text-[9px] px-2 py-1">
-            {product.product_type}
-          </span>
-        )}
+        <div className="absolute top-3 left-3 flex flex-col gap-1.5">
+          {disc > 0 && (
+            <span className="bg-primary text-primary-foreground font-meta text-[9px] px-2 py-1" data-testid={`discount-badge-${product.id}`}>
+              -{disc}%
+            </span>
+          )}
+          {product.product_type !== "physical" && (
+            <span className="bg-black/60 backdrop-blur-md text-white font-meta text-[9px] px-2 py-1">
+              {product.product_type}
+            </span>
+          )}
+        </div>
         <button
           data-testid={`custom-version-btn-${product.id}`}
           onClick={(e) => { e.stopPropagation(); user ? setShowCustom(true) : navigate("/auth"); }}
@@ -99,7 +108,10 @@ export function ProductCard({ product, onChange }) {
         <p className="text-[11px] text-muted-foreground truncate">{product.seller_name}</p>
         <p className="font-display font-bold text-sm leading-snug line-clamp-2">{product.title}</p>
         <Stars rating={product.rating} count={product.reviews?.length ?? 0} />
-        <p className="font-meta text-base mt-0.5">{inr(product.price)}</p>
+        <p className="font-meta text-base mt-0.5">
+          {inr(finalPrice)}
+          {disc > 0 && <span className="text-muted-foreground line-through text-xs ml-2">{inr(product.price)}</span>}
+        </p>
         <p className="text-[11px] text-muted-foreground">
           {product.product_type === "physical" ? "+ ₹99 shipping · " : "Instant download · "}
           <span className={inStock ? "text-emerald-500" : "text-primary"}>{inStock ? "In stock" : "Out of stock"}</span>
@@ -166,6 +178,9 @@ export function StatusBadge({ status }) {
     delivered: "bg-emerald-500/10 text-emerald-500",
     shipped: "bg-blue-500/10 text-blue-500",
     placed: "bg-blue-500/10 text-blue-500",
+    accepted: "bg-blue-500/10 text-blue-500",
+    processing: "bg-violet-400/10 text-violet-400",
+    cancelled: "bg-red-500/10 text-red-500",
     open: "bg-amber-500/10 text-amber-500",
     resolved: "bg-emerald-500/10 text-emerald-500",
   };

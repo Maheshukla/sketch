@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Truck } from "lucide-react";
+import { Truck, Check, X } from "lucide-react";
 import api, { fmtErr, inr, fileUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader, EmptyState, StatusBadge } from "@/components/cards";
 
 const SELLER_ROLES = ["artist", "retailer", "company_owner", "company_admin", "company_artist"];
-const STEPS = ["placed", "shipped", "delivered"];
+const STEPS = ["placed", "accepted", "processing", "shipped", "delivered", "completed"];
 
 export default function OrdersPage() {
   const { user } = useAuth();
@@ -29,10 +29,10 @@ export default function OrdersPage() {
     load();
   }, []);
 
-  const deliver = async (id) => {
+  const setStatus = async (id, action, extra = {}) => {
     try {
-      await api.post(`/orders/${id}/deliver`);
-      toast.success("Order delivered — escrow released to seller");
+      await api.post(`/orders/${id}/status`, { action, ...extra });
+      toast.success(`Order ${extra.action || action}`);
       load();
     } catch (e) {
       toast.error(fmtErr(e));
@@ -42,13 +42,7 @@ export default function OrdersPage() {
   const doShip = async (id) => {
     const s = ship[id] || {};
     if (!s.courier) return toast.error("Select a courier partner");
-    try {
-      await api.post(`/orders/${id}/ship`, { courier: s.courier, tracking_id: s.tracking_id || "" });
-      toast.success(`Shipped via ${s.courier}`);
-      load();
-    } catch (e) {
-      toast.error(fmtErr(e));
-    }
+    setStatus(id, "shipped", { courier: s.courier, tracking_id: s.tracking_id || "" });
   };
 
   return (
@@ -66,7 +60,7 @@ export default function OrdersPage() {
           ) : (
             <div className="space-y-4">
               {orders.map((o) => (
-                <div key={o.id} className="border border-border/60 p-5" data-testid={`order-${o.id}`}>
+                <div key={o.id} className="card-lift border border-border/60 p-5" data-testid={`order-${o.id}`}>
                   <div className="flex flex-wrap items-center gap-3 justify-between">
                     <div>
                       <p className="font-meta text-[9px] text-muted-foreground">Order · {new Date(o.created_at).toLocaleDateString()}</p>
@@ -74,16 +68,18 @@ export default function OrdersPage() {
                     </div>
                     <StatusBadge status={o.status} />
                   </div>
-                  <div className="flex gap-2 mt-4">
-                    {STEPS.map((s) => (
-                      <div key={s} className={`h-1 flex-1 ${STEPS.indexOf(o.status) >= STEPS.indexOf(s) ? "bg-primary" : "bg-secondary"}`} />
-                    ))}
-                  </div>
+                  {o.status !== "cancelled" && (
+                    <div className="flex gap-1.5 mt-4" data-testid={`order-steps-${o.id}`}>
+                      {STEPS.map((s) => (
+                        <div key={s} className={`h-1 flex-1 transition-colors ${STEPS.indexOf(o.status) >= STEPS.indexOf(s) ? "bg-primary" : "bg-secondary"}`} />
+                      ))}
+                    </div>
+                  )}
                   <div className="mt-4 space-y-2">
                     {o.items.map((it, i) => (
                       <div key={i} className="flex items-center gap-3 text-sm">
                         <img src={fileUrl(it.image)} alt="" className="h-10 w-10 object-cover" />
-                        <span className="flex-1 truncate">{it.title} × {it.qty}</span>
+                        <span className="flex-1 truncate">{it.title}{it.variation ? ` (${it.variation})` : ""} × {it.qty}</span>
                         <span className="font-meta text-xs">{inr(it.price * it.qty)}</span>
                       </div>
                     ))}
@@ -93,11 +89,16 @@ export default function OrdersPage() {
                       <Truck className="h-3.5 w-3.5" /> {o.courier} {o.tracking_id && `· ${o.tracking_id}`}
                     </p>
                   )}
-                  {o.status === "shipped" && (
-                    <Button data-testid={`confirm-delivery-${o.id}`} onClick={() => deliver(o.id)} className="rounded-none font-meta text-[10px] mt-4">
-                      Confirm delivery
-                    </Button>
-                  )}
+                  <div className="flex gap-2 mt-4">
+                    {o.status === "shipped" && (
+                      <Button data-testid={`confirm-delivery-${o.id}`} onClick={() => setStatus(o.id, "delivered")}
+                        className="rounded-none font-meta text-[10px]">Confirm delivery</Button>
+                    )}
+                    {o.status === "delivered" && (
+                      <Button data-testid={`complete-order-${o.id}`} onClick={() => setStatus(o.id, "completed")} variant="outline"
+                        className="rounded-none font-meta text-[10px]">Mark completed</Button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -111,7 +112,7 @@ export default function OrdersPage() {
             ) : (
               <div className="space-y-4">
                 {sales.map((o) => (
-                  <div key={o.id} className="border border-border/60 p-5" data-testid={`sale-${o.id}`}>
+                  <div key={o.id} className="card-lift border border-border/60 p-5" data-testid={`sale-${o.id}`}>
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <p className="font-display font-bold">{o.buyer_name}</p>
@@ -121,10 +122,31 @@ export default function OrdersPage() {
                     </div>
                     <div className="mt-3 space-y-1.5">
                       {o.items.map((it, i) => (
-                        <p key={i} className="text-sm text-muted-foreground">{it.title} × {it.qty} — <span className="font-meta text-xs text-foreground">{inr(it.price * it.qty)}</span></p>
+                        <p key={i} className="text-sm text-muted-foreground">
+                          {it.title}{it.variation ? ` (${it.variation})` : ""} × {it.qty} — <span className="font-meta text-xs text-foreground">{inr(it.price * it.qty)}</span>
+                        </p>
                       ))}
                     </div>
+
                     {o.status === "placed" && (
+                      <div className="flex gap-2 mt-4">
+                        <Button data-testid={`accept-order-${o.id}`} onClick={() => setStatus(o.id, "accept")}
+                          className="rounded-none font-meta text-[10px]">
+                          <Check className="h-3.5 w-3.5 mr-1.5" /> Accept order
+                        </Button>
+                        <Button data-testid={`reject-order-${o.id}`} onClick={() => setStatus(o.id, "reject")} variant="outline"
+                          className="rounded-none font-meta text-[10px] text-primary border-primary/40 hover:bg-primary/10">
+                          <X className="h-3.5 w-3.5 mr-1.5" /> Reject (refund)
+                        </Button>
+                      </div>
+                    )}
+
+                    {o.status === "accepted" && (
+                      <Button data-testid={`processing-order-${o.id}`} onClick={() => setStatus(o.id, "processing")} variant="outline"
+                        className="rounded-none font-meta text-[10px] mt-4">Start processing</Button>
+                    )}
+
+                    {["accepted", "processing"].includes(o.status) && (
                       <div className="flex flex-wrap gap-2 mt-4">
                         <Select value={ship[o.id]?.courier || ""} onValueChange={(v) => setShip({ ...ship, [o.id]: { ...ship[o.id], courier: v } })}>
                           <SelectTrigger data-testid={`ship-courier-${o.id}`} className="rounded-none w-48">
@@ -142,7 +164,7 @@ export default function OrdersPage() {
                         <Button data-testid={`ship-btn-${o.id}`} onClick={() => doShip(o.id)} className="rounded-none font-meta text-[10px]">Mark shipped</Button>
                       </div>
                     )}
-                    {o.courier && o.status !== "placed" && (
+                    {o.courier && ["shipped", "delivered", "completed"].includes(o.status) && (
                       <p className="text-xs text-muted-foreground mt-3">Shipped via {o.courier} {o.tracking_id && `· ${o.tracking_id}`}</p>
                     )}
                   </div>

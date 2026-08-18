@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Minus, Plus, Trash2, ShieldCheck, BookmarkPlus, ArrowUpToLine } from "lucide-react";
+import { Minus, Plus, Trash2, ShieldCheck, BookmarkPlus, ArrowUpToLine, MapPin, Pencil } from "lucide-react";
 import api, { fmtErr, inr, fileUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,7 +18,7 @@ const METHODS = [
 ];
 
 export function calcBreakdown(items) {
-  const subtotal = items.reduce((s, i) => s + i.price * i.qty, 0);
+  const subtotal = items.reduce((s, i) => s + (i.final_price ?? i.price) * i.qty, 0);
   const physical = items.some((i) => i.product_type === "physical");
   const tax = Math.round(subtotal * 0.05);
   const shipping = physical ? 99 : 0;
@@ -33,13 +33,48 @@ export default function CartPage() {
   const [method, setMethod] = useState("upi");
   const [payState, setPayState] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [addresses, setAddresses] = useState([]);
+  const [addrId, setAddrId] = useState("");
+  const [addrForm, setAddrForm] = useState({ label: "Home", line: "", city: "", pin: "", phone: "" });
+  const [addrEditing, setAddrEditing] = useState(null);
+  const [showAddrForm, setShowAddrForm] = useState(false);
   const navigate = useNavigate();
 
   const load = () => api.get("/cart").then((r) => setItems(r.data.items));
+  const loadAddresses = () => api.get("/users/me/addresses").then((r) => {
+    setAddresses(r.data);
+    if (r.data.length && !addrId) setAddrId(r.data[0].id);
+  }).catch(() => {});
   useEffect(() => {
     load();
+    loadAddresses();
     api.get("/recently-viewed").then((r) => setRecent(r.data.items)).catch(() => {});
   }, []);
+
+  const saveAddress = async () => {
+    if (!addrForm.line || !addrForm.city || !addrForm.pin) return toast.error("Line, city and PIN are required");
+    try {
+      if (addrEditing) {
+        await api.put(`/users/me/addresses/${addrEditing}`, addrForm);
+      } else {
+        const { data } = await api.post("/users/me/addresses", addrForm);
+        setAddrId(data.id);
+      }
+      toast.success("Address saved");
+      setShowAddrForm(false);
+      setAddrEditing(null);
+      setAddrForm({ label: "Home", line: "", city: "", pin: "", phone: "" });
+      loadAddresses();
+    } catch (e) {
+      toast.error(fmtErr(e));
+    }
+  };
+
+  const delAddress = async (id) => {
+    await api.delete(`/users/me/addresses/${id}`);
+    if (addrId === id) setAddrId("");
+    loadAddresses();
+  };
 
   const setQty = async (pid, qty) => {
     await api.put(`/cart/${pid}`, { qty });
@@ -62,11 +97,41 @@ export default function CartPage() {
   const fees = calcBreakdown(active);
 
   const checkout = async () => {
+    if (!addrId && !address) return toast.error("Select or enter a delivery address");
     setBusy(true);
     try {
-      const { data } = await api.post("/orders/checkout", { payment_method: method, address });
+      const { data } = await api.post("/orders/checkout", { payment_method: method, address_id: addrId, address });
       const po = await api.post("/payments/create", { amount: data.order.total, purpose: "order", ref_id: data.order.id });
-      setPayState({ order: data.order, paymentOrder: po.data });
+      if (po.data.razorpay) {
+        await loadRazorpay();
+        const rzp = new window.Razorpay({
+          key: po.data.key_id,
+          order_id: po.data.order_id,
+          amount: Math.round(data.order.total * 100),
+          currency: "INR",
+          name: "Sketch",
+          description: "Order payment",
+          theme: { color: "#E63946" },
+          handler: async (resp) => {
+            try {
+              const verified = await api.post("/payments/verify", {
+                order_id: po.data.order_id,
+                razorpay_payment_id: resp.razorpay_payment_id,
+                razorpay_signature: resp.razorpay_signature,
+                method,
+              });
+              await api.post(`/orders/${data.order.id}/pay`, { payment_db_id: verified.data.id });
+              toast.success("Payment successful — order placed (escrow)");
+              navigate("/orders");
+            } catch (e) {
+              toast.error(fmtErr(e));
+            }
+          },
+        });
+        rzp.open();
+      } else {
+        setPayState({ order: data.order, paymentOrder: po.data });
+      }
     } catch (e) {
       toast.error(fmtErr(e));
     } finally {
@@ -127,8 +192,65 @@ export default function CartPage() {
             </div>
             <div>
               <Label className="font-meta text-[10px]">Delivery address</Label>
-              <Input data-testid="checkout-address" className="rounded-none mt-1" placeholder="Street, city, PIN"
-                value={address} onChange={(e) => setAddress(e.target.value)} />
+              <div className="mt-2 space-y-2" data-testid="address-book">
+                {addresses.map((a) => (
+                  <div key={a.id} data-testid={`address-${a.id}`}
+                    onClick={() => setAddrId(a.id)}
+                    className={`border p-3 cursor-pointer transition-colors ${addrId === a.id ? "border-primary bg-primary/5" : "border-border/60 hover:border-foreground/40"}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-display font-bold text-sm flex items-center gap-1.5">
+                        <MapPin className="h-3.5 w-3.5 text-primary" /> {a.label}
+                      </p>
+                      <div className="flex gap-2">
+                        <button data-testid={`edit-address-${a.id}`} onClick={(e) => { e.stopPropagation(); setAddrForm(a); setAddrEditing(a.id); setShowAddrForm(true); }}
+                          className="text-muted-foreground hover:text-foreground transition-colors">
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button data-testid={`delete-address-${a.id}`} onClick={(e) => { e.stopPropagation(); delAddress(a.id); }}
+                          className="text-muted-foreground hover:text-primary transition-colors">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">{a.line}, {a.city} — {a.pin}</p>
+                  </div>
+                ))}
+                {showAddrForm ? (
+                  <div className="border border-border/60 p-3 space-y-2" data-testid="address-form">
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input data-testid="addr-label" placeholder="Label (Home/Work)" className="rounded-none" value={addrForm.label}
+                        onChange={(e) => setAddrForm({ ...addrForm, label: e.target.value })} />
+                      <Input data-testid="addr-phone" placeholder="Phone" className="rounded-none" value={addrForm.phone}
+                        onChange={(e) => setAddrForm({ ...addrForm, phone: e.target.value })} />
+                    </div>
+                    <Input data-testid="addr-line" placeholder="Street address" className="rounded-none" value={addrForm.line}
+                      onChange={(e) => setAddrForm({ ...addrForm, line: e.target.value })} />
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input data-testid="addr-city" placeholder="City" className="rounded-none" value={addrForm.city}
+                        onChange={(e) => setAddrForm({ ...addrForm, city: e.target.value })} />
+                      <Input data-testid="addr-pin" placeholder="PIN code" className="rounded-none" value={addrForm.pin}
+                        onChange={(e) => setAddrForm({ ...addrForm, pin: e.target.value })} />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button data-testid="addr-save" onClick={saveAddress} className="rounded-none font-meta text-[9px] h-9">
+                        {addrEditing ? "Update" : "Save address"}
+                      </Button>
+                      <Button variant="outline" data-testid="addr-cancel" onClick={() => { setShowAddrForm(false); setAddrEditing(null); }}
+                        className="rounded-none font-meta text-[9px] h-9">Cancel</Button>
+                    </div>
+                  </div>
+                ) : (
+                  <button data-testid="add-address-btn"
+                    onClick={() => { setAddrEditing(null); setAddrForm({ label: "Home", line: "", city: "", pin: "", phone: "" }); setShowAddrForm(true); }}
+                    className="w-full border border-dashed border-border p-3 font-meta text-[9px] text-muted-foreground hover:text-foreground hover:border-foreground/40 transition-colors">
+                    + Add new address
+                  </button>
+                )}
+                {!addresses.length && !showAddrForm && (
+                  <Input data-testid="checkout-address" className="rounded-none" placeholder="Or type a one-time address: street, city, PIN"
+                    value={address} onChange={(e) => setAddress(e.target.value)} />
+                )}
+              </div>
             </div>
             <div>
               <Label className="font-meta text-[10px]">Payment method</Label>
@@ -187,6 +309,17 @@ export default function CartPage() {
   );
 }
 
+function loadRazorpay() {
+  return new Promise((resolve, reject) => {
+    if (window.Razorpay) return resolve();
+    const s = document.createElement("script");
+    s.src = "https://checkout.razorpay.com/v1/checkout.js";
+    s.onload = resolve;
+    s.onerror = () => reject(new Error("Failed to load Razorpay checkout"));
+    document.body.appendChild(s);
+  });
+}
+
 function CartRow({ it, onQty, onRemove, onToggleSaved, navigate, saved }) {
   return (
     <div className="flex gap-4 border border-border/60 p-4" data-testid={`cart-item-${it.id}`}>
@@ -195,7 +328,11 @@ function CartRow({ it, onQty, onRemove, onToggleSaved, navigate, saved }) {
       <div className="flex-1 min-w-0">
         <p className="font-display font-bold">{it.title}</p>
         <p className="text-xs text-muted-foreground">{it.seller_name}</p>
-        <p className="font-meta text-xs mt-2">{inr(it.price)}</p>
+        <p className="font-meta text-xs mt-2">
+          {inr(it.final_price ?? it.price)}
+          {it.discount_pct > 0 && <span className="text-muted-foreground line-through ml-2">{inr(it.price)}</span>}
+          {it.variation && <span className="text-muted-foreground ml-2">· {it.variation}</span>}
+        </p>
         <div className="flex flex-wrap items-center gap-2 mt-3">
           {!saved && (
             <>

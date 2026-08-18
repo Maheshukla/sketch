@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime, timezone
 
 from bson import ObjectId
@@ -37,6 +38,22 @@ CATEGORIES = [
 ]
 
 
+BANNERS = [
+    {"title": "The Monsoon Edit", "subtitle": "Original watercolors and sketches from independent artists.",
+     "image": IMG["paint2"], "cta_label": "Explore artwork", "cta_link": "/marketplace",
+     "tag": "Seasonal collection", "order": 1, "active": True},
+    {"title": "Commission a portrait", "subtitle": "Custom artwork, made for your story. Advance payments protected by escrow.",
+     "image": IMG["studio2"], "cta_label": "Start a commission", "cta_link": "/reels",
+     "tag": "Featured creators", "order": 2, "active": True},
+    {"title": "Wedding season ateliers", "subtitle": "Invitations, decor themes and gift design from verified studios.",
+     "image": IMG["digital3"], "cta_label": "Explore wedding services", "cta_link": "/marketplace?category=Wedding",
+     "tag": "Wedding campaign", "order": 3, "active": True},
+    {"title": "Studio supplies, restocked", "subtitle": "Brushes, canvas and cotton paper from trusted retailers.",
+     "image": IMG["studio1"], "cta_label": "Shop supplies", "cta_link": "/marketplace?category=Supplies",
+     "tag": "Marketplace", "order": 4, "active": True},
+]
+
+
 def _user(email, password, name, role, **extra):
     doc = {
         "email": email, "password_hash": hash_password(password), "name": name,
@@ -70,6 +87,34 @@ async def seed(db):
             {"$set": {"subcategories": c["subcategories"]},
              "$setOnInsert": {"created_at": datetime.now(timezone.utc)}},
             upsert=True)
+
+    async for u in db.users.find({"username": {"$exists": False}}):
+        base = re.sub(r"[^a-z0-9]", "", (u.get("name") or "user").lower())[:12] or "user"
+        username, n = base, 1
+        while await db.users.find_one({"username": username}):
+            n += 1
+            username = f"{base}{n}"
+        await db.users.update_one({"_id": u["_id"]}, {"$set": {"username": username}})
+
+    for b in BANNERS:
+        await db.banners.update_one({"title": b["title"]}, {"$set": b}, upsert=True)
+
+    if not await db.collections.count_documents({"featured": True}):
+        admin_user = await db.users.find_one({"email": admin_email})
+        if admin_user:
+            picks = {
+                "Editors' picks — Painting": ["Monsoon Reverie", "Abstract Geometry No.7", "Charcoal Portrait Study"],
+                "Handmade & clay": ["Ceramic Moon Vase", "Terracotta Duo Planters"],
+                "Digital drops": ["Neon Bloom — Digital Print", "Holographic Dream Loop", "3D Character Sculpt — Game Ready"],
+            }
+            for name, titles in picks.items():
+                pids = [p["_id"] async for p in db.products.find({"title": {"$in": titles}})]
+                if pids:
+                    await db.collections.insert_one({
+                        "user_id": admin_user["_id"], "name": name,
+                        "description": "Curated by the Sketch editorial team",
+                        "product_ids": pids, "featured": True,
+                        "created_at": datetime.now(timezone.utc)})
 
     if await db.users.count_documents({}) > 1:
         return

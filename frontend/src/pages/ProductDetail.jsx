@@ -23,6 +23,7 @@ export default function ProductDetail() {
   const [showCustom, setShowCustom] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [related, setRelated] = useState([]);
+  const [variation, setVariation] = useState("");
   const imgRef = useRef(null);
 
   const load = () => api.get(`/products/${id}`).then((r) => setProduct(r.data)).catch(() => navigate("/marketplace"));
@@ -46,7 +47,7 @@ export default function ProductDetail() {
   const addCart = async () => {
     if (needAuth()) return;
     try {
-      await api.post("/cart", { product_id: id, qty: 1 });
+      await api.post("/cart", { product_id: id, qty: 1, variation });
       toast.success("Added to cart");
     } catch (e) {
       toast.error(fmtErr(e));
@@ -55,7 +56,7 @@ export default function ProductDetail() {
 
   const buyNow = async () => {
     if (needAuth()) return;
-    await api.post("/cart", { product_id: id, qty: 1 });
+    await api.post("/cart", { product_id: id, qty: 1, variation });
     navigate("/cart");
   };
 
@@ -84,6 +85,10 @@ export default function ProductDetail() {
     const y = ((e.clientY - rect.top) / rect.height) * 100;
     setZoomPos(`${x}% ${y}%`);
   };
+
+  const disc = product.discount_pct || 0;
+  const varDelta = product.variations?.find((v) => v.name === variation)?.delta || 0;
+  const finalPrice = Math.round(product.price * (1 - disc / 100) + varDelta);
 
   return (
     <div className="max-w-[1600px] mx-auto px-4 sm:px-8 py-12" data-testid="product-detail-page">
@@ -128,10 +133,30 @@ export default function ProductDetail() {
             <StatusBadge status={product.product_type} />
           </div>
 
-          <p className="font-meta text-2xl mt-8" data-testid="product-price">{inr(product.price)}</p>
-          <p className="text-xs text-muted-foreground mt-1">
-            {product.product_type === "physical" ? (product.stock > 0 ? `${product.stock} in stock` : "Out of stock") : "Instant download after purchase"}
+          <p className="font-meta text-2xl mt-8" data-testid="product-price">
+            {inr(finalPrice)}
+            {disc > 0 && <span className="text-muted-foreground line-through text-base ml-3">{inr(product.price)}</span>}
+            {disc > 0 && <span className="text-primary text-sm ml-2">-{disc}%</span>}
           </p>
+          <p className="text-xs text-muted-foreground mt-1" data-testid="product-availability">
+            {product.product_type === "physical" ? (product.stock > 0 ? `${product.stock} in stock` : "Out of stock") : "Instant download after purchase"}
+            {" · "}{product.product_type === "physical" ? "Estimated delivery 3–5 days" : "Delivered instantly"}
+          </p>
+
+          {product.variations?.length > 0 && (
+            <div className="mt-5" data-testid="variations-block">
+              <p className="font-meta text-[10px] text-muted-foreground mb-2">Options</p>
+              <div className="flex gap-2 flex-wrap">
+                {product.variations.map((v) => (
+                  <button key={v.name} data-testid={`variation-${v.name.replace(/\s+/g, "-").toLowerCase()}`}
+                    onClick={() => setVariation(variation === v.name ? "" : v.name)}
+                    className={`font-meta text-[10px] px-4 py-2 border transition-colors ${variation === v.name ? "border-primary text-primary" : "border-border/60 text-muted-foreground hover:border-foreground/40"}`}>
+                    {v.name}{v.delta ? ` (+${inr(v.delta)})` : ""}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <p className="text-muted-foreground leading-relaxed mt-6 max-w-lg">{product.description}</p>
 

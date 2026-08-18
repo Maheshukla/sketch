@@ -13,21 +13,63 @@ import { Label } from "@/components/ui/label";
 
 export default function ReelsPage() {
   const [reels, setReels] = useState([]);
-  const { user } = useAuth();
-
-  const load = () => api.get("/reels").then((r) => setReels(r.data)).catch(() => {});
-  useEffect(() => {
-    load();
-  }, []);
-
   const patch = (id, updates) =>
     setReels((rs) => rs.map((r) => (r.id === id ? { ...r, ...updates } : r)));
+  const [hashtag, setHashtag] = useState("");
+  const [skip, setSkip] = useState(0);
+  const [exhausted, setExhausted] = useState(false);
+  const sentinelRef = useRef(null);
+  const { user } = useAuth();
+
+  const load = (append = false, tag = hashtag, skipCount = 0) =>
+    api.get("/reels", { params: { sort: tag ? "" : "random", hashtag: tag, skip: skipCount, limit: 10 } })
+      .then((r) => {
+        if (append) {
+          setReels((rs) => [...rs, ...r.data.filter((n) => !rs.some((x) => x.id === n.id))]);
+          if (!r.data.length) setExhausted(true);
+        } else {
+          setReels(r.data);
+        }
+        if (!append && r.data.length < 10) setExhausted(true);
+      })
+      .catch(() => {});
+
+  useEffect(() => {
+    setSkip(0);
+    setExhausted(false);
+    load(false, hashtag, 0);
+  }, [hashtag]);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && !exhausted) {
+        setSkip((s) => {
+          const next = s + 10;
+          load(true, hashtag, next);
+          return next;
+        });
+      }
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [exhausted, hashtag]);
 
   return (
     <div className="reel-snap h-[calc(100vh-4rem)] overflow-y-scroll bg-[#050505]" data-testid="reels-page">
+      {hashtag && (
+        <div className="sticky top-0 z-30 bg-black/80 backdrop-blur-xl px-4 py-3 flex items-center gap-3">
+          <span className="font-meta text-[10px] text-primary" data-testid="hashtag-filter">#{hashtag}</span>
+          <button data-testid="clear-hashtag" onClick={() => setHashtag("")} className="font-meta text-[10px] text-white/60 hover:text-white">
+            ✕ clear
+          </button>
+        </div>
+      )}
       {reels.map((reel) => (
-        <ReelItem key={reel.id} reel={reel} user={user} patch={patch} reload={load} />
+        <ReelItem key={reel.id} reel={reel} user={user} patch={patch} reload={load} onTag={setHashtag} />
       ))}
+      <div ref={sentinelRef} className="h-4" data-testid="reels-sentinel" />
       {!reels.length && (
         <div className="h-[calc(100vh-4rem)] flex items-center justify-center text-white/50 font-meta text-xs">
           No reels yet
@@ -37,7 +79,7 @@ export default function ReelsPage() {
   );
 }
 
-function ReelItem({ reel, user, patch, reload }) {
+function ReelItem({ reel, user, patch, reload, onTag }) {
   const navigate = useNavigate();
   const [showComments, setShowComments] = useState(false);
   const [comments, setComments] = useState([]);
@@ -144,6 +186,16 @@ function ReelItem({ reel, user, patch, reload }) {
           {reel.creator_name}
         </button>
         <p className="text-white/80 text-sm mt-2 leading-relaxed">{reel.caption}</p>
+        {(reel.caption.match(/#\w+/g) || []).length > 0 && (
+          <div className="flex gap-2 flex-wrap mt-2" data-testid={`reel-hashtags-${reel.id}`}>
+            {(reel.caption.match(/#\w+/g) || []).map((t) => (
+              <button key={t} data-testid={`hashtag-${t.slice(1)}`} onClick={() => onTag?.(t.slice(1))}
+                className="font-meta text-[10px] text-primary hover:underline">
+                {t}
+              </button>
+            ))}
+          </div>
+        )}
 
         {reel.product && (
           <div className="mt-5 bg-white/10 backdrop-blur-xl border border-white/20 p-4 max-w-sm" data-testid={`reel-product-${reel.id}`}>

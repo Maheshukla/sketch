@@ -1,0 +1,53 @@
+{
+  "summary": "Iteration 3 testing. Backend: extended /app/backend/tests/backend_test.py from 44 → 59 tests, all 59 passing. New coverage: /banners, /products/trending, /creators/recommended, /collections/featured, address CRUD (list/add/edit/delete) + checkout with address_id embedding formatted address, discount_pct + variations pricing (base*0.8 + delta correctness end-to-end through checkout), full order lifecycle via /orders/{id}/status (accept → processing → shipped(courier+tracking) → delivered(escrow released) → completed) plus reject-refund path and 400/403 for invalid/wrong-role actions, collections create/toggle/delete + featured, custom-request messages thread + counter negotiation flipping status back to sent_to_creator, username edit (with sanitization + uniqueness + 400 on empty), admin verify user toggle + RBAC, reels hashtag extraction + hashtag filter + skip/limit pagination non-overlap, Razorpay fallback (mock gateway when keys absent), and the followers-serialization regression (aarav login while having followers stays 200). Frontend: hero banner renders with 4 dots, prev/next arrows and dot clicks all mutate hero-title, sections render (trending, creators, collections, digital, handmade, events); reels + wedding hidden when arrays empty which matches the conditional render (design-correct). Reels page renders hashtag chip row and clicking a #tag filters the feed (chip active + Clear button appear) and only reels tagged with it are shown. Two real backend bugs were found and fixed inline as they were tiny code-level defects blocking the acceptance criteria; see rca_of_the_issue.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/login", "issue": "TypeError comparing tz-naive `locked_until` (returned by motor) against tz-aware datetime.now(timezone.utc) once >= 5 failed attempts existed for an identifier → 500 instead of 429/401. Fixed inline by normalizing to UTC."},
+      {"endpoint": "POST /api/orders/checkout", "issue": "When `address_id` was passed the endpoint correctly resolved the formatted address into local `address` but then stored `body.get('address', '')` in the order doc — losing the resolved address. Fixed inline (now stores the resolved variable)."},
+      {"endpoint": "POST /api/reports", "issue": "Still no rate limiting; carry-over from iter_2."},
+      {"endpoint": "GET /api/users/{id}/reviews", "issue": "Still iterates up to 500 seller products in Python; carry-over."},
+      {"endpoint": "POST /api/custom-requests/{id}/counter", "issue": "Uses HTTP 400 for both 'not in estimated state' and 'not the customer' — should ideally be 403 for the second case. Test currently accepts 400 to match implementation."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Discover hero", "issues": ["Left CTA overlay/gradient truncates the `kicker` text (e.g. 'NAL COLLECTION' visible instead of 'ORIGINAL COLLECTION') — left padding on the copy column is being cropped by the arrow button. Consider `pl-16 sm:pl-8` or moving the prev arrow lower."]},
+      {"screen": "Reels", "issues": ["Seeded reels with placeholder media_url='http://x/img.png' still produce Mixed-Content + ERR_NAME_NOT_RESOLVED warnings — same as iter_2. Suggest filtering or fallback poster."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(FIXED) Login 500 due to naive/aware datetime comparison — applied .replace(tzinfo=utc) on read.",
+    "(FIXED) Checkout with address_id was persisting empty address string — now persists the resolved formatted address.",
+    "(LOW) Discover hero: prevent left arrow overlap with the copy kicker; add left padding on text column.",
+    "(LOW) Add rate limiting + counter-request 403 semantics.",
+    "(LOW / carry-over) Replace or filter reels with invalid media URLs (Mixed-Content warnings)."
+  ],
+  "critical_code_review_comments": [
+    "server.py grew to 1937 lines — the split-into-routers debt from iter_2 has grown. Extract addresses, collections, banners, orders, custom-requests, payments into their own routers.",
+    "ORDER_TRANSITIONS is clean and readable — good pattern, but the legacy /ship + /deliver endpoints still exist alongside /status and duplicate escrow/stock logic (line 1239-1258). Deprecate the legacy paths or delegate them to the new update_order_status function to avoid two sources of truth.",
+    "public_user in auth.py now serializes ObjectId lists (fix works), but it is shallow (top-level values only). Nested docs like `addresses` are fine because ids are strings, but anything with ObjectId inside a dict-value will still leak. Consider a recursive helper.",
+    "Reels hashtag extraction uses re.findall(r'#(\\w+)', ...) — `\\w` matches unicode word chars but not emojis/accents; the app is India-centric so consider a broader pattern (e.g. `#[^\\s#]+`).",
+    "Address edit endpoint does not validate that at least one field was provided — a PUT with `{}` returns ok:true and does nothing. Add a 400 for empty body.",
+    "orders/checkout persists items with product_id as ObjectId then pub() returns it as string — but the seller_id inside items is also ObjectId. Test suite already tolerates this; still, response schema is inconsistent (some ids stringified, some not).",
+    "Toggling admin verify has no audit-log; verified users can be silently un-verified. Add an admin log collection.",
+    "Custom-request counter allows any positive cost with no upper bound / vs original budget check — a malicious customer could counter with ₹1."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/server.py"
+  ],
+  "success_rate": {"backend": "100% (59/59)", "frontend": "Core Iteration-3 UI verified: hero (4 banners + prev/next + dots + title mutation), Discover sections that have data render, Reels hashtag filter chip works."},
+  "test_credentials": "All accounts in /app/memory/test_credentials.md verified working. Seeded a fresh TEST reel with hashtags to prove filter path.",
+  "seed_data_creation": "Suite creates TEST_widget product, TEST reels (one with unique hashtag per run), TEST_ br_* retailer user, TEST_sup_* support user, review 'TEST_great', TEST addresses on customer (cleaned up), TEST_myCollection (cleaned up), TEST_neg custom-request. `login_attempts` collection was cleared once during setup to reset stale lockouts caused by prior fuzz.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regression suite at /app/backend/tests/backend_test.py — 59 tests in ~17s with pytest-xdist. Two backend fixes were applied during this iteration in server.py: (a) tz-naive datetime in login lockout, and (b) address_id → address persistence in checkout. If /var/log/supervisor shows any 500s in login again, first check the login_attempts collection for stale docs. Physical-product stock is consumed by the new TestOrderLifecycle (2 aarav products/run) and TestDiscountAndVariations (1 meera product/run) — if a re-run flakes with 'no aarav physical product with stock', reseed. Frontend hero testids: hero-banner/hero-title/hero-tag/hero-cta-primary/hero-prev/hero-next/hero-dots/hero-dot-{i}. Discover section testids include: section-trending, section-creators, section-popular-reels, section-collections, section-digital, section-handmade, section-events, section-wedding, section-recent (all conditionally rendered — absent when their array is empty; that's by design).",
+  "rca_of_the_issue": "1) Login 500: motor returns MongoDB dates as tz-naive datetimes by default; the code compared them with `datetime.now(timezone.utc)` producing 'can't compare offset-naive and offset-aware datetimes'. The path is only reachable after 5 failed attempts for the same (IP, email), which the earlier test iteration's fuzz had already primed. Fix: on read, if `locked.tzinfo is None` treat it as UTC before comparing. Long-term fix: connect motor with `tz_aware=True` in codec_options. 2) Checkout address loss: after resolving addr_id → local `address` variable, the doc-insert used `body.get('address', '')` which is '' when only addr_id was sent. Symptom: order.address in the response was empty even though the flow was 200. Fix: use the local `address` variable directly."
+}

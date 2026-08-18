@@ -45,6 +45,19 @@ A SaaS platform combining Instagram (reels/social), Behance (portfolios), Etsy (
 - New endpoints: /products/recommended, /products/{id}/related, /products/{id}/view, /recently-viewed, /cart/{id}/save-for-later, /users/me/become-retailer, /users/me/settings, /users/{id}/reviews
 - Testing: iteration_2 — 44/44 backend tests pass, all 11 UI checks pass (desktop + mobile)
 
+## Iteration 3 — Production ecosystem upgrade (2026-08-18)
+- Home: auto-rotating hero banner slider (4 seeded promo banners, arrows, dots, CTAs; admin banner API) + section rails: trending, recommended creators, popular reels, featured collections, digital, handmade, events, wedding, recently viewed
+- Profiles: username (auto-gen + editable), website, location, verified badge (admin verify endpoint), role badges, 9-stat row, followers/following dialogs with remove-follower, Saved tab (self), Collections (create/add/featured)
+- Reels: random feed, hashtag extraction + filter, infinite scroll (skip/limit + sentinel), like/comment notifications
+- Marketplace: discount_pct strikethrough pricing, variations with price deltas, delivery estimates
+- Cart: address book CRUD, address required at checkout, nav cart/wishlist count badges
+- Orders: 6-state lifecycle (placed→accepted→processing→shipped→delivered→completed, cancelled via reject → escrow refund) via /orders/{id}/status; legacy /ship + /deliver retained
+- Custom orders: negotiation message thread + customer counter-offer flow
+- Payments: Razorpay test-mode integration (order create + signature verify) activates when RAZORPAY_KEY_ID/SECRET env set; demo gateway fallback otherwise
+- UI polish: heavier body font weight (Satoshi 500), card-lift hover shadows, hero entrance animations
+- Regression fix: public_user now serializes ObjectId lists (login 500 for followed users)
+- Testing: iteration_3 — 59/59 backend tests pass (suite extended with banners/trending/addresses/lifecycle/collections/negotiation/username/verify/hashtags/razorpay-fallback coverage); hero + sections + hashtag filter verified in browser; tester fixed login tz-naive lockout comparison and checkout address_id persistence inline; follow-up fixes applied: hero kicker padding, empty address-edit 400
+
 ## Backlog
 - P0: Real Razorpay + webhook verification; real SMS OTP provider
 - P1: Balance payment for advance-paid custom orders; refunds/disputes flow; live chat; reel video transcoding; saved-reels page; sales analytics aggregation pipeline

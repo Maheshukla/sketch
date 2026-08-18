@@ -5,6 +5,7 @@ orders + mock payment escrow, custom-request full flow, company mgmt,
 support tickets, notifications, admin moderation/overview, RBAC.
 """
 import os
+import re
 import time
 import uuid
 import pytest
@@ -601,3 +602,422 @@ class TestProfileTabsData:
         if r.status_code == 404:
             pytest.skip("no /users/{id} endpoint")
         assert r.status_code == 200
+
+
+# ============================================================
+# Iteration 3 — NEW FEATURES tests
+# Banners, addresses CRUD + checkout, discount_pct + variations,
+# order lifecycle (accept/reject/processing/shipped/delivered/completed),
+# collections (create/toggle/featured), custom request messages + counter,
+# username edit, admin verify user, razorpay fallback (mock gateway),
+# reels hashtag filter & pagination
+# ============================================================
+
+
+class TestBanners:
+    def test_public_banners(self):
+        r = requests.get(f"{API}/banners")
+        assert r.status_code == 200
+        arr = r.json()
+        assert isinstance(arr, list)
+        # Seed says 4 banners; accept >=1 (idempotent seed may vary)
+        assert len(arr) >= 1
+        first = arr[0]
+        for k in ("id", "title"):
+            assert k in first
+        assert "_id" not in first
+
+    def test_trending_products(self):
+        r = requests.get(f"{API}/products/trending")
+        assert r.status_code == 200
+        assert isinstance(r.json(), list)
+
+    def test_recommended_creators(self):
+        r = requests.get(f"{API}/creators/recommended")
+        assert r.status_code == 200
+        arr = r.json()
+        assert isinstance(arr, list)
+        if arr:
+            assert "follower_count" in arr[0]
+
+    def test_featured_collections(self):
+        r = requests.get(f"{API}/collections/featured")
+        assert r.status_code == 200
+        arr = r.json()
+        assert isinstance(arr, list)
+        # Seed says 3 featured — assert at least 1 with hydrated products
+        if arr:
+            assert "products" in arr[0]
+
+
+class TestAddresses:
+    def test_address_crud_and_checkout_flow(self, customer):
+        # cleanup existing
+        for a in customer.get(f"{API}/users/me/addresses").json():
+            customer.delete(f"{API}/users/me/addresses/{a['id']}")
+        # missing required field
+        r = customer.post(f"{API}/users/me/addresses", json={"line": "1"})
+        assert r.status_code == 400
+        # add
+        r = customer.post(f"{API}/users/me/addresses", json={
+            "label": "TEST_Home", "line": "12 TEST Street", "city": "Mumbai",
+            "pin": "400001", "phone": "9999999999"})
+        assert r.status_code == 200
+        addr = r.json()
+        assert addr["line"] == "12 TEST Street"
+        aid = addr["id"]
+        # edit
+        r = customer.put(f"{API}/users/me/addresses/{aid}", json={"city": "Pune"})
+        assert r.status_code == 200
+        addrs = customer.get(f"{API}/users/me/addresses").json()
+        assert next(a for a in addrs if a["id"] == aid)["city"] == "Pune"
+        # checkout WITHOUT address should 400 (empty cart or address). Ensure cart has 1 physical.
+        prods = [p for p in requests.get(f"{API}/products").json()
+                 if p.get("status") == "approved" and p.get("product_type") == "physical" and p.get("stock", 0) > 0]
+        if not prods:
+            pytest.skip("no physical products")
+        pid = prods[0]["id"]
+        customer.delete(f"{API}/cart/{pid}")
+        customer.post(f"{API}/cart", json={"product_id": pid, "qty": 1})
+        r = customer.post(f"{API}/orders/checkout", json={"payment_method": "upi"})
+        assert r.status_code == 400
+        # checkout with address_id embeds formatted address
+        r = customer.post(f"{API}/orders/checkout",
+                          json={"payment_method": "upi", "address_id": aid})
+        assert r.status_code == 200, r.text
+        order = r.json()["order"]
+        assert "Pune" in order["address"]
+        assert "400001" in order["address"]
+        # invalid address_id
+        customer.post(f"{API}/cart", json={"product_id": pid, "qty": 1})
+        r = customer.post(f"{API}/orders/checkout",
+                          json={"payment_method": "upi", "address_id": "does_not_exist"})
+        assert r.status_code == 400
+        # delete address
+        r = customer.delete(f"{API}/users/me/addresses/{aid}")
+        assert r.status_code == 200
+        # clean cart line
+        customer.delete(f"{API}/cart/{pid}")
+
+
+class TestDiscountAndVariations:
+    def test_discount_and_variation_pricing(self, customer, meera):
+        # Find meera-owned approved physical product
+        me = meera.get(f"{API}/auth/me").json()
+        prods = requests.get(f"{API}/products").json()
+        target = next((p for p in prods
+                       if p.get("seller_id") == me["id"]
+                       and p.get("status") == "approved"
+                       and p.get("product_type") == "physical"
+                       and p.get("stock", 0) > 0), None)
+        if not target:
+            pytest.skip("no meera physical product")
+        pid = target["id"]
+        base_price = target["price"]
+        # PUT discount_pct + variations
+        r = meera.put(f"{API}/products/{pid}", json={
+            "discount_pct": 20,
+            "variations": [{"name": "Large", "delta": 100.0},
+                           {"name": "Small", "delta": 0.0}]})
+        assert r.status_code == 200, r.text
+        updated = r.json()
+        assert updated["discount_pct"] == 20
+        # detail exposes discount
+        d = requests.get(f"{API}/products/{pid}").json()
+        assert d["discount_pct"] == 20
+        assert any(v["name"] == "Large" for v in d.get("variations", []))
+        # Add to cart with Large variation and checkout to verify pricing
+        customer.delete(f"{API}/cart/{pid}")
+        r = customer.post(f"{API}/cart", json={"product_id": pid, "qty": 1, "variation": "Large"})
+        assert r.status_code == 200
+        # need an address
+        addrs = customer.get(f"{API}/users/me/addresses").json()
+        if not addrs:
+            customer.post(f"{API}/users/me/addresses", json={
+                "label": "TEST_H", "line": "1 lane", "city": "Delhi",
+                "pin": "110001", "phone": "9000000000"})
+            addrs = customer.get(f"{API}/users/me/addresses").json()
+        aid = addrs[0]["id"]
+        r = customer.post(f"{API}/orders/checkout",
+                          json={"payment_method": "upi", "address_id": aid})
+        assert r.status_code == 200, r.text
+        order = r.json()["order"]
+        # expected per-unit price = base*(1-0.20) + 100 delta
+        expected = round(base_price * 0.80 + 100.0, 2)
+        item = next(i for i in order["items"]
+                    if str(i.get("product_id")) == str(pid) or i.get("id") == pid)
+        assert abs(item["price"] - expected) < 0.5, f"got {item['price']} expected {expected}"
+        # cleanup — revert product
+        meera.put(f"{API}/products/{pid}", json={"discount_pct": 0, "variations": []})
+
+
+class TestOrderLifecycle:
+    def _fresh_placed_order(self, customer, seller_sess):
+        me = seller_sess.get(f"{API}/auth/me").json()
+        prods = requests.get(f"{API}/products").json()
+        target = next((p for p in prods
+                       if p.get("seller_id") == me["id"]
+                       and p.get("status") == "approved"
+                       and p.get("product_type") == "physical"
+                       and p.get("stock", 0) > 0), None)
+        if not target:
+            return None
+        pid = target["id"]
+        customer.delete(f"{API}/cart/{pid}")
+        customer.post(f"{API}/cart", json={"product_id": pid, "qty": 1})
+        addrs = customer.get(f"{API}/users/me/addresses").json()
+        if not addrs:
+            addrs = [customer.post(f"{API}/users/me/addresses", json={
+                "label": "TEST_H", "line": "1 lane", "city": "Delhi",
+                "pin": "110001", "phone": "9000000000"}).json()]
+        aid = addrs[0]["id"]
+        r = customer.post(f"{API}/orders/checkout",
+                          json={"payment_method": "upi", "address_id": aid})
+        order = r.json()["order"]
+        pc = customer.post(f"{API}/payments/create", json={
+            "amount": order["total"], "purpose": "order", "ref_id": order["id"]}).json()
+        pv = customer.post(f"{API}/payments/verify", json={
+            "order_id": pc["order_id"], "method": "upi"}).json()
+        customer.post(f"{API}/orders/{order['id']}/pay", json={"payment_db_id": pv["id"]})
+        return order["id"], pv["id"]
+
+    def test_full_lifecycle_via_status(self, customer, aarav):
+        rec = self._fresh_placed_order(customer, aarav)
+        if not rec:
+            pytest.skip("no aarav physical product with stock")
+        oid_, _ = rec
+        # accept
+        r = aarav.post(f"{API}/orders/{oid_}/status", json={"action": "accept"})
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "accepted"
+        # wrong-role attempts a buyer-only action from seller
+        r = aarav.post(f"{API}/orders/{oid_}/status", json={"action": "delivered"})
+        assert r.status_code in (400, 403)
+        # processing
+        r = aarav.post(f"{API}/orders/{oid_}/status", json={"action": "processing"})
+        assert r.status_code == 200
+        assert r.json()["status"] == "processing"
+        # invalid transition: delivered before shipped
+        r = customer.post(f"{API}/orders/{oid_}/status", json={"action": "delivered"})
+        assert r.status_code == 400
+        # shipped needs courier
+        r = aarav.post(f"{API}/orders/{oid_}/status", json={"action": "shipped"})
+        assert r.status_code == 400  # missing/invalid courier
+        r = aarav.post(f"{API}/orders/{oid_}/status", json={
+            "action": "shipped", "courier": "Delhivery", "tracking_id": "TRK_TEST_1"})
+        assert r.status_code == 200
+        st = r.json()
+        assert st["status"] == "shipped"
+        assert st.get("courier") == "Delhivery"
+        # customer marks delivered → escrow released
+        r = customer.post(f"{API}/orders/{oid_}/status", json={"action": "delivered"})
+        assert r.status_code == 200
+        assert r.json()["status"] == "delivered"
+        # completed
+        r = customer.post(f"{API}/orders/{oid_}/status", json={"action": "completed"})
+        assert r.status_code == 200
+        assert r.json()["status"] == "completed"
+
+    def test_reject_path_refunds_escrow(self, customer, aarav):
+        rec = self._fresh_placed_order(customer, aarav)
+        if not rec:
+            pytest.skip("no aarav physical product with stock")
+        oid_, _ = rec
+        # customer cannot reject
+        r = customer.post(f"{API}/orders/{oid_}/status", json={"action": "reject"})
+        assert r.status_code == 403
+        # seller rejects
+        r = aarav.post(f"{API}/orders/{oid_}/status", json={"action": "reject"})
+        assert r.status_code == 200
+        assert r.json()["status"] == "cancelled"
+        # invalid action
+        r = aarav.post(f"{API}/orders/{oid_}/status", json={"action": "bogus"})
+        assert r.status_code == 400
+
+
+class TestCollectionsCRUD:
+    def test_create_toggle_delete(self, customer):
+        r = customer.post(f"{API}/collections", json={
+            "name": "TEST_myCollection", "description": "test"})
+        assert r.status_code == 200, r.text
+        col = r.json()
+        cid = col["id"]
+        # missing name
+        assert customer.post(f"{API}/collections", json={"name": ""}).status_code == 400
+        # list mine
+        mine = customer.get(f"{API}/collections").json()
+        assert any(c["id"] == cid for c in mine)
+        # toggle a product in
+        prods = requests.get(f"{API}/products").json()
+        if prods:
+            pid = prods[0]["id"]
+            r = customer.post(f"{API}/collections/{cid}/items", json={"product_id": pid})
+            assert r.status_code == 200
+            assert r.json().get("added") is True
+            # toggle off
+            r = customer.post(f"{API}/collections/{cid}/items", json={"product_id": pid})
+            assert r.json().get("added") is False
+        # user_collections public
+        me = customer.get(f"{API}/auth/me").json()
+        r = requests.get(f"{API}/users/{me['id']}/collections")
+        assert r.status_code == 200
+        # featured endpoint still works
+        assert requests.get(f"{API}/collections/featured").status_code == 200
+        # delete
+        r = customer.delete(f"{API}/collections/{cid}")
+        assert r.status_code == 200
+
+
+class TestUsernameAndAdminVerify:
+    def test_username_edit_and_admin_verify(self, customer, admin):
+        # Get current username
+        me = customer.get(f"{API}/auth/me").json()
+        original_uname = me.get("username", "")
+        # Set a valid username
+        new_u = f"testcust_{uuid.uuid4().hex[:6]}"
+        r = customer.put(f"{API}/users/me", json={"username": new_u})
+        assert r.status_code == 200, r.text
+        assert r.json()["username"] == new_u
+        # Uppercase & special chars sanitized
+        r = customer.put(f"{API}/users/me", json={"username": f"Test-User!{uuid.uuid4().hex[:4]}"})
+        assert r.status_code == 200
+        assert re.match(r"^[a-z0-9_]+$", r.json()["username"])
+        # Empty invalid
+        r = customer.put(f"{API}/users/me", json={"username": "!!!"})
+        assert r.status_code == 400
+        # Duplicate: try to use meera's username
+        meera_me = _sess(*CREDS["meera"]).get(f"{API}/auth/me").json()
+        r = customer.put(f"{API}/users/me", json={"username": meera_me["username"]})
+        assert r.status_code == 400
+        # Restore
+        customer.put(f"{API}/users/me", json={"username": original_uname or "customer"})
+
+        # Admin verify (toggle)
+        r = admin.post(f"{API}/admin/users/{meera_me['id']}/verify")
+        assert r.status_code == 200
+        state1 = r.json()["verified"]
+        prof = requests.get(f"{API}/users/{meera_me['id']}").json()
+        assert prof.get("verified") == state1
+        # Toggle back to preserve baseline
+        r = admin.post(f"{API}/admin/users/{meera_me['id']}/verify")
+        assert r.json()["verified"] != state1
+
+        # Non-admin cannot verify
+        r = customer.post(f"{API}/admin/users/{meera_me['id']}/verify")
+        assert r.status_code == 403
+
+
+class TestFollowersRegression:
+    """Regression: public_user must serialize ObjectId lists so login for followed users doesn't 500."""
+    def test_login_for_followed_users(self):
+        # Have customer follow aarav to populate follower list
+        cust = _sess(*CREDS["customer"])
+        aarav = _sess(*CREDS["aarav"])
+        aarav_id = aarav.get(f"{API}/auth/me").json()["id"]
+        # ensure following state true
+        st = cust.post(f"{API}/users/{aarav_id}/follow").json()
+        if not st.get("following", True):
+            cust.post(f"{API}/users/{aarav_id}/follow")
+        # aarav re-login (which previously 500'd) — must return 200
+        r = requests.post(f"{API}/auth/login", json={
+            "email": CREDS["aarav"][0], "password": CREDS["aarav"][1]})
+        assert r.status_code == 200, r.text
+        # followers list contains customer
+        followers = requests.get(f"{API}/users/{aarav_id}/followers").json()
+        cust_me = cust.get(f"{API}/auth/me").json()
+        assert any(f["id"] == cust_me["id"] for f in followers)
+        # remove follower via DELETE
+        r = aarav.delete(f"{API}/users/me/followers/{cust_me['id']}")
+        assert r.status_code == 200
+        followers2 = requests.get(f"{API}/users/{aarav_id}/followers").json()
+        assert not any(f["id"] == cust_me["id"] for f in followers2)
+
+
+class TestCustomRequestMessagesAndCounter:
+    def test_messages_and_counter(self, customer, admin, aarav):
+        aarav_id = aarav.get(f"{API}/auth/me").json()["id"]
+        # Create and route to creator
+        r = customer.post(f"{API}/custom-requests", json={
+            "target_id": aarav_id, "target_type": "user",
+            "title": "TEST_neg", "description": "portrait", "budget": 5000})
+        cr_id = r.json()["id"]
+        admin.post(f"{API}/custom-requests/{cr_id}/review", json={"approve": True})
+        # Message thread — customer sends
+        r = customer.post(f"{API}/custom-requests/{cr_id}/messages",
+                          json={"text": "TEST_hello there"})
+        assert r.status_code == 200
+        assert r.json()["text"] == "TEST_hello there"
+        # Empty message rejected
+        r = customer.post(f"{API}/custom-requests/{cr_id}/messages", json={"text": "   "})
+        assert r.status_code == 400
+        # Estimate → then customer counters
+        aarav.post(f"{API}/custom-requests/{cr_id}/estimate",
+                   json={"cost": 5000, "deadline": "2026-03-01", "message": "ok"})
+        # Counter as customer
+        r = customer.post(f"{API}/custom-requests/{cr_id}/counter",
+                          json={"cost": 3800, "message": "cheaper?"})
+        assert r.status_code == 200
+        d = r.json()
+        assert d["status"] == "sent_to_creator"
+        assert d["counter"]["cost"] == 3800
+        # Counter with invalid cost
+        r = customer.post(f"{API}/custom-requests/{cr_id}/counter",
+                          json={"cost": 0})
+        # already flipped to sent_to_creator → this endpoint requires status == estimated
+        assert r.status_code == 400
+        # Non-customer cannot counter
+        r = aarav.post(f"{API}/custom-requests/{cr_id}/counter", json={"cost": 4000})
+        assert r.status_code == 400
+
+
+class TestRazorpayFallback:
+    def test_payments_create_returns_mock_gateway(self, customer):
+        r = customer.post(f"{API}/payments/create", json={
+            "amount": 500, "purpose": "order", "ref_id": "test_ref"})
+        assert r.status_code == 200
+        d = r.json()
+        # Keys are absent by design in this env — must fall back to mock
+        assert d.get("gateway") == "mock"
+        assert d["order_id"].startswith("order_mock_")
+        assert "razorpay" not in d or d.get("razorpay") is not True
+        # verify succeeds without signature
+        v = customer.post(f"{API}/payments/verify", json={
+            "order_id": d["order_id"], "method": "upi"})
+        assert v.status_code == 200
+        assert "id" in v.json()
+
+
+class TestReelsHashtagAndPagination:
+    def test_hashtag_extraction_and_filter(self, meera, admin):
+        tag = f"test{uuid.uuid4().hex[:6]}"
+        r = meera.post(f"{API}/reels", json={
+            "caption": f"Look at this #{tag} #art work",
+            "media_url": "https://picsum.photos/300", "media_type": "image"})
+        assert r.status_code == 200
+        rid = r.json()["id"]
+        assert tag in r.json().get("hashtags", [])
+        # approve
+        admin.post(f"{API}/admin/moderation/reels/{rid}", json={"action": "approve"})
+        # filter feed by hashtag
+        r = requests.get(f"{API}/reels", params={"hashtag": tag})
+        assert r.status_code == 200
+        arr = r.json()
+        assert any(x["id"] == rid for x in arr)
+        # all returned reels contain tag
+        for x in arr:
+            assert tag in x.get("hashtags", [])
+
+    def test_pagination_skip_limit(self):
+        r1 = requests.get(f"{API}/reels", params={"limit": 2, "skip": 0})
+        assert r1.status_code == 200
+        page1 = r1.json()
+        if len(page1) < 2:
+            pytest.skip("not enough reels")
+        r2 = requests.get(f"{API}/reels", params={"limit": 2, "skip": 2})
+        assert r2.status_code == 200
+        page2 = r2.json()
+        ids1 = {x["id"] for x in page1}
+        ids2 = {x["id"] for x in page2}
+        # No overlap
+        assert not (ids1 & ids2)
+

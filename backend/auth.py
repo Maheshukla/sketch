@@ -57,8 +57,13 @@ def public_user(doc: dict) -> dict:
     doc = dict(doc)
     doc["id"] = str(doc.pop("_id"))
     doc.pop("password_hash", None)
-    if doc.get("company_id"):
-        doc["company_id"] = str(doc["company_id"])
+    for k, v in doc.items():
+        if isinstance(v, ObjectId):
+            doc[k] = str(v)
+        elif isinstance(v, datetime):
+            doc[k] = v.isoformat()
+        elif isinstance(v, list):
+            doc[k] = [str(i) if isinstance(i, ObjectId) else i for i in v]
     return doc
 
 

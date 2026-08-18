@@ -172,11 +172,21 @@ export default function Navbar() {
 
           {user ? (
             <>
-              <Button variant="ghost" size="icon" data-testid="nav-wishlist" className="rounded-none hidden sm:flex" onClick={() => navigate("/wishlist")}>
+              <Button variant="ghost" size="icon" data-testid="nav-wishlist" className="rounded-none hidden sm:flex relative" onClick={() => navigate("/wishlist")}>
                 <Heart className="h-4 w-4" />
+                {user.wishlist_count > 0 && (
+                  <span data-testid="nav-wishlist-badge" className="absolute -top-0.5 -right-0.5 h-4 min-w-4 px-0.5 bg-foreground text-background text-[10px] font-bold flex items-center justify-center">
+                    {user.wishlist_count}
+                  </span>
+                )}
               </Button>
-              <Button variant="ghost" size="icon" data-testid="nav-cart" className="rounded-none" onClick={() => navigate("/cart")}>
+              <Button variant="ghost" size="icon" data-testid="nav-cart" className="rounded-none relative" onClick={() => navigate("/cart")}>
                 <ShoppingBag className="h-4 w-4" />
+                {user.cart_count > 0 && (
+                  <span data-testid="nav-cart-badge" className="absolute -top-0.5 -right-0.5 h-4 min-w-4 px-0.5 bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+                    {user.cart_count}
+                  </span>
+                )}
               </Button>
               <Button variant="ghost" size="icon" data-testid="nav-notifications" className="rounded-none relative" onClick={() => navigate("/notifications")}>
                 <Bell className="h-4 w-4" />

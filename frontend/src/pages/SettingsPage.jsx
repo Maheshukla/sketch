@@ -21,14 +21,14 @@ const DEFAULTS = {
 export default function SettingsPage() {
   const { user, refresh } = useAuth();
   const { theme, toggle } = useTheme();
-  const [account, setAccount] = useState({ name: "", bio: "", mobile: "", specialty: "" });
+  const [account, setAccount] = useState({ name: "", bio: "", mobile: "", specialty: "", username: "", website: "", location: "" });
   const [settings, setSettings] = useState(DEFAULTS);
   const [courier, setCourier] = useState("Delhivery");
   const [couriers, setCouriers] = useState([]);
 
   useEffect(() => {
     if (user) {
-      setAccount({ name: user.name || "", bio: user.bio || "", mobile: user.mobile || "", specialty: user.specialty || "" });
+      setAccount({ name: user.name || "", bio: user.bio || "", mobile: user.mobile || "", specialty: user.specialty || "", username: user.username || "", website: user.website || "", location: user.location || "" });
       setSettings({ ...DEFAULTS, ...(user.settings || {}) });
       setCourier(user.courier_preference || "Delhivery");
     }
@@ -78,10 +78,25 @@ export default function SettingsPage() {
                 onChange={(e) => setAccount({ ...account, name: e.target.value })} />
             </div>
             <div>
+              <Label className="font-meta text-[10px]">Username</Label>
+              <Input data-testid="settings-username" className="rounded-none mt-1" value={account.username}
+                onChange={(e) => setAccount({ ...account, username: e.target.value })} placeholder="lowercase, no spaces" />
+            </div>
+            <div>
               <Label className="font-meta text-[10px]">Mobile</Label>
               <Input data-testid="settings-mobile" className="rounded-none mt-1" value={account.mobile}
                 onChange={(e) => setAccount({ ...account, mobile: e.target.value })} />
             </div>
+            <div>
+              <Label className="font-meta text-[10px]">Location</Label>
+              <Input data-testid="settings-location" className="rounded-none mt-1" value={account.location}
+                onChange={(e) => setAccount({ ...account, location: e.target.value })} placeholder="City, Country" />
+            </div>
+          </div>
+          <div>
+            <Label className="font-meta text-[10px]">Website</Label>
+            <Input data-testid="settings-website" className="rounded-none mt-1" value={account.website}
+              onChange={(e) => setAccount({ ...account, website: e.target.value })} placeholder="https://yoursite.com" />
           </div>
           <div>
             <Label className="font-meta text-[10px]">Specialty</Label>

@@ -72,6 +72,8 @@ function RequestCard({ req, user, reload }) {
   const [payOpen, setPayOpen] = useState(false);
   const [payInfo, setPayInfo] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [msgText, setMsgText] = useState("");
+  const [counter, setCounter] = useState({ cost: "", message: "" });
 
   const isCustomer = req.customer_id === user.id;
   const isStaff = ["super_admin", "admin"].includes(user.role);
@@ -177,6 +179,30 @@ function RequestCard({ req, user, reload }) {
         </div>
       )}
 
+      {isCreatorSide && req.status === "sent_to_creator" && req.counter && (
+        <p className="mt-4 text-sm border-l-2 border-amber-400 pl-3" data-testid={`cr-counter-note-${req.id}`}>
+          Customer countered at <span className="font-meta text-foreground">{inr(req.counter.cost)}</span> — send a revised estimate below.
+        </p>
+      )}
+
+      {isCustomer && req.status === "estimated" && (
+        <div className="mt-4 grid sm:grid-cols-[140px_1fr_auto] gap-2 items-end border border-dashed border-border/60 p-3" data-testid={`cr-counter-form-${req.id}`}>
+          <div>
+            <Label className="font-meta text-[9px]">Counter offer (₹)</Label>
+            <Input data-testid={`cr-counter-cost-${req.id}`} type="number" className="rounded-none mt-1" value={counter.cost}
+              onChange={(e) => setCounter({ ...counter, cost: e.target.value })} />
+          </div>
+          <div>
+            <Label className="font-meta text-[9px]">Note (optional)</Label>
+            <Input data-testid={`cr-counter-msg-${req.id}`} className="rounded-none mt-1" value={counter.message}
+              onChange={(e) => setCounter({ ...counter, message: e.target.value })} placeholder="Reason for counter..." />
+          </div>
+          <Button data-testid={`cr-counter-send-${req.id}`} disabled={busy || !counter.cost} variant="outline"
+            onClick={() => act(() => api.post(`/custom-requests/${req.id}/counter`, { cost: parseFloat(counter.cost), message: counter.message }), "Counter offer sent")}
+            className="rounded-none font-meta text-[10px]">Negotiate</Button>
+        </div>
+      )}
+
       {isCustomer && req.status === "estimated" && (
         <div className="flex flex-wrap gap-2 mt-5">
           <Button data-testid={`cr-accept-full-${req.id}`} disabled={busy}
@@ -244,6 +270,27 @@ function RequestCard({ req, user, reload }) {
             className="rounded-none font-meta text-[10px] block">Approve & complete order</Button>
         </div>
       )}
+
+      <div className="mt-6 border-t border-border/60 pt-4" data-testid={`cr-thread-${req.id}`}>
+        <p className="font-meta text-[9px] text-muted-foreground mb-3">Negotiation thread</p>
+        <div className="space-y-2 max-h-40 overflow-y-auto">
+          {(req.messages || []).map((m) => (
+            <p key={m.id} className="text-sm">
+              <span className="font-display font-bold mr-2">{m.from}</span>
+              <span className="text-muted-foreground">{m.text}</span>
+            </p>
+          ))}
+          {!req.messages?.length && <p className="text-xs text-muted-foreground">No messages yet — discuss details, timelines and references here.</p>}
+        </div>
+        <div className="flex gap-2 mt-3">
+          <Input data-testid={`cr-msg-input-${req.id}`} className="rounded-none" placeholder="Write a message..."
+            value={msgText} onChange={(e) => setMsgText(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && msgText.trim() && act(async () => { await api.post(`/custom-requests/${req.id}/messages`, { text: msgText }); setMsgText(""); })} />
+          <Button data-testid={`cr-msg-send-${req.id}`} disabled={busy || !msgText.trim()} variant="outline"
+            onClick={() => act(async () => { await api.post(`/custom-requests/${req.id}/messages`, { text: msgText }); setMsgText(""); })}
+            className="rounded-none font-meta text-[10px]">Send</Button>
+        </div>
+      </div>
 
       <Dialog open={payOpen} onOpenChange={setPayOpen}>
         <DialogContent className="rounded-none max-w-sm" data-testid="cr-payment-modal">

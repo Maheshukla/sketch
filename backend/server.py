@@ -4,6 +4,8 @@ load_dotenv()
 
 import logging
 import os
+import random
+import re
 import secrets
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -40,6 +42,13 @@ TAX_RATE = 0.05
 SHIPPING_FLAT = 99.0
 PACKAGING_FLAT = 49.0
 ADVANCE_RATE = 0.30
+RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "")
+RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "")
+
+try:
+    import razorpay as _razorpay
+except ImportError:
+    _razorpay = None
 
 
 def oid(value: str) -> ObjectId:
@@ -120,10 +129,16 @@ async def register(data: RegisterIn, response: Response):
     role = "company_owner" if data.role == "company" else data.role
     if await db.users.find_one({"email": email}):
         raise HTTPException(400, "Email already registered")
+    base = re.sub(r"[^a-z0-9]", "", data.name.lower())[:12] or "user"
+    username, n = base, 1
+    while await db.users.find_one({"username": username}):
+        n += 1
+        username = f"{base}{n}"
     doc = {
         "email": email, "password_hash": hash_password(data.password), "name": data.name,
-        "role": role, "status": "active", "followers": [], "following": [],
+        "username": username, "role": role, "status": "active", "followers": [], "following": [],
         "bio": "", "avatar": "", "banner": "", "specialty": "", "mobile": data.mobile,
+        "website": "", "location": "", "verified": False,
         "courier_preference": "Delhivery", "created_at": datetime.now(timezone.utc),
     }
     res = await db.users.insert_one(doc)
@@ -139,6 +154,8 @@ async def login(data: LoginIn, request: Request, response: Response):
     attempt = await db.login_attempts.find_one({"identifier": identifier})
     if attempt and attempt.get("count", 0) >= 5:
         locked = attempt.get("locked_until")
+        if locked and locked.tzinfo is None:
+            locked = locked.replace(tzinfo=timezone.utc)
         if locked and locked > datetime.now(timezone.utc):
             raise HTTPException(429, "Too many failed attempts. Try again later.")
     user = await db.users.find_one({"email": email})
@@ -164,8 +181,13 @@ async def logout(response: Response):
 
 @api_router.get("/auth/me")
 async def me(user=Depends(current_user)):
-    unread = await db.notifications.count_documents({"user_id": oid(user["id"]), "read": False})
-    return {**user, "unread_notifications": unread}
+    uid = oid(user["id"])
+    unread = await db.notifications.count_documents({"user_id": uid, "read": False})
+    cart = await db.carts.find_one({"user_id": uid})
+    cart_count = sum(i["qty"] for i in cart.get("items", []) if not i.get("saved")) if cart else 0
+    wl = await db.wishlists.find_one({"user_id": uid})
+    wl_count = len(wl.get("product_ids", [])) if wl else 0
+    return {**user, "unread_notifications": unread, "cart_count": cart_count, "wishlist_count": wl_count}
 
 
 @api_router.post("/auth/refresh")
@@ -316,15 +338,40 @@ async def list_couriers():
     return COURIERS
 
 
+@api_router.get("/banners")
+async def list_banners():
+    banners = await db.banners.find({"active": True}).sort("order", 1).to_list(20)
+    return [pub(b) for b in banners]
+
+
+@api_router.post("/admin/banners")
+async def create_banner(request: Request, user=Depends(require(*ADMIN_ROLES))):
+    body = await request.json()
+    doc = {"title": body["title"], "subtitle": body.get("subtitle", ""), "image": body.get("image", ""),
+           "cta_label": body.get("cta_label", "Explore"), "cta_link": body.get("cta_link", "/marketplace"),
+           "tag": body.get("tag", "Promotion"), "order": int(body.get("order", 99)), "active": True}
+    res = await db.banners.insert_one(doc)
+    return pub(await db.banners.find_one({"_id": res.inserted_id}))
+
+
 # ---------------- Users / Profiles ----------------
 
 @api_router.put("/users/me")
 async def update_profile(request: Request, user=Depends(current_user)):
     body = await request.json()
-    allowed = {"name", "bio", "avatar", "banner", "specialty", "mobile", "courier_preference"}
+    allowed = {"name", "bio", "avatar", "banner", "specialty", "mobile", "courier_preference",
+               "username", "website", "location"}
     update = {k: v for k, v in body.items() if k in allowed}
     if update.get("courier_preference") and update["courier_preference"] not in COURIERS:
         raise HTTPException(400, "Invalid courier")
+    if "username" in update:
+        uname = re.sub(r"[^a-z0-9_]", "", str(update["username"]).lower())[:20]
+        if not uname:
+            raise HTTPException(400, "Invalid username")
+        clash = await db.users.find_one({"username": uname, "_id": {"$ne": oid(user["id"])}})
+        if clash:
+            raise HTTPException(400, "Username taken")
+        update["username"] = uname
     await db.users.update_one({"_id": oid(user["id"])}, {"$set": update})
     return public_user(await db.users.find_one({"_id": oid(user["id"])}))
 
@@ -376,6 +423,84 @@ async def toggle_follow(user_id: str, user=Depends(current_user)):
     return {"following": True}
 
 
+@api_router.get("/users/{user_id}/followers")
+async def get_followers(user_id: str):
+    target = await db.users.find_one({"_id": oid(user_id)})
+    if not target:
+        raise HTTPException(404, "User not found")
+    out = []
+    for fid in target.get("followers", [])[-100:]:
+        u = await db.users.find_one({"_id": fid})
+        if u:
+            p = public_user(u)
+            p.pop("followers", None)
+            p.pop("following", None)
+            out.append(p)
+    return out
+
+
+@api_router.get("/users/{user_id}/following")
+async def get_following(user_id: str):
+    target = await db.users.find_one({"_id": oid(user_id)})
+    if not target:
+        raise HTTPException(404, "User not found")
+    out = []
+    for fid in target.get("following", [])[-100:]:
+        u = await db.users.find_one({"_id": fid})
+        if u:
+            p = public_user(u)
+            p.pop("followers", None)
+            p.pop("following", None)
+            out.append(p)
+    return out
+
+
+@api_router.delete("/users/me/followers/{follower_id}")
+async def remove_follower(follower_id: str, user=Depends(current_user)):
+    fid = oid(follower_id)
+    await db.users.update_one({"_id": oid(user["id"])}, {"$pull": {"followers": fid}})
+    await db.users.update_one({"_id": fid}, {"$pull": {"following": oid(user["id"])}})
+    return {"ok": True}
+
+
+# ---------------- Addresses ----------------
+
+@api_router.get("/users/me/addresses")
+async def list_addresses(user=Depends(current_user)):
+    doc = await db.users.find_one({"_id": oid(user["id"])})
+    return doc.get("addresses", [])
+
+
+@api_router.post("/users/me/addresses")
+async def add_address(request: Request, user=Depends(current_user)):
+    body = await request.json()
+    if not body.get("line") or not body.get("city") or not body.get("pin"):
+        raise HTTPException(400, "Address line, city and PIN are required")
+    addr = {"id": uuid.uuid4().hex[:10], "label": body.get("label", "Home"),
+            "line": body["line"], "city": body["city"], "pin": body["pin"],
+            "phone": body.get("phone", "")}
+    await db.users.update_one({"_id": oid(user["id"])}, {"$push": {"addresses": addr}})
+    return addr
+
+
+@api_router.put("/users/me/addresses/{addr_id}")
+async def edit_address(addr_id: str, request: Request, user=Depends(current_user)):
+    body = await request.json()
+    update = {f"addresses.$.{k}": v for k, v in body.items() if k in {"label", "line", "city", "pin", "phone"}}
+    if not update:
+        raise HTTPException(400, "At least one address field is required")
+    res = await db.users.update_one({"_id": oid(user["id"]), "addresses.id": addr_id}, {"$set": update})
+    if not res.matched_count:
+        raise HTTPException(404, "Address not found")
+    return {"ok": True}
+
+
+@api_router.delete("/users/me/addresses/{addr_id}")
+async def delete_address(addr_id: str, user=Depends(current_user)):
+    await db.users.update_one({"_id": oid(user["id"])}, {"$pull": {"addresses": {"id": addr_id}}})
+    return {"ok": True}
+
+
 @api_router.post("/users/me/become-retailer")
 async def become_retailer(user=Depends(current_user)):
     if user["role"] != "customer":
@@ -408,6 +533,24 @@ async def user_reviews(user_id: str):
                         "product_title": p["title"], "product_id": str(p["_id"])})
     out.sort(key=lambda r: r.get("created_at", ""), reverse=True)
     return out[:50]
+
+
+@api_router.get("/creators/recommended")
+async def recommended_creators():
+    pipeline = [
+        {"$match": {"role": {"$in": ["artist", "company_owner", "retailer"]}, "status": "active"}},
+        {"$addFields": {"follower_count": {"$size": {"$ifNull": ["$followers", []]}}}},
+        {"$sort": {"follower_count": -1}}, {"$limit": 10},
+    ]
+    users = await db.users.aggregate(pipeline).to_list(10)
+    out = []
+    for u in users:
+        p = public_user(u)
+        p["follower_count"] = u["follower_count"]
+        p.pop("followers", None)
+        p.pop("following", None)
+        out.append(p)
+    return out
 
 
 @api_router.get("/creators")
@@ -560,8 +703,10 @@ class ReelIn(BaseModel):
 async def create_reel(data: ReelIn, user=Depends(require("artist", "company_owner", "company_admin", "company_artist", "retailer"))):
     if data.media_type not in {"image", "video"}:
         raise HTTPException(400, "media_type must be image or video")
+    hashtags = list({t.lower() for t in re.findall(r"#(\w+)", data.caption)})
     doc = {
         "caption": data.caption, "media_url": data.media_url, "media_type": data.media_type,
+        "hashtags": hashtags,
         "creator_id": oid(user["id"]), "creator_name": user["name"], "creator_avatar": user.get("avatar", ""),
         "likes": [], "saves": [], "shares": 0, "comments": [],
         "status": "pending", "created_at": datetime.now(timezone.utc),
@@ -573,10 +718,13 @@ async def create_reel(data: ReelIn, user=Depends(require("artist", "company_owne
 
 
 @api_router.get("/reels")
-async def feed(request: Request, saved: bool = False, creator_id: str = ""):
+async def feed(request: Request, saved: bool = False, creator_id: str = "", hashtag: str = "",
+               sort: str = "", skip: int = 0, limit: int = 50):
     query = {"status": "approved"}
     if creator_id:
         query["creator_id"] = oid(creator_id)
+    if hashtag:
+        query["hashtags"] = hashtag.lower().lstrip("#")
     me = None
     try:
         me = await get_current_user(request, db)
@@ -584,7 +732,11 @@ async def feed(request: Request, saved: bool = False, creator_id: str = ""):
         pass
     if saved and me:
         query["saves"] = oid(me["id"])
-    reels = await db.reels.find(query).sort("created_at", -1).to_list(100)
+    reels = await db.reels.find(query).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    if sort == "popular":
+        reels.sort(key=lambda r: len(r.get("likes", [])), reverse=True)
+    elif sort == "random":
+        random.shuffle(reels)
     out = []
     for r in reels:
         item = pub(r)
@@ -612,6 +764,8 @@ async def like_reel(reel_id: str, user=Depends(current_user)):
         await db.reels.update_one({"_id": rid}, {"$pull": {"likes": uid}})
         return {"liked": False}
     await db.reels.update_one({"_id": rid}, {"$addToSet": {"likes": uid}})
+    if str(reel["creator_id"]) != user["id"]:
+        await notify(reel["creator_id"], "like", f"{user['name']} liked your reel", "/reels")
     return {"liked": True}
 
 
@@ -644,6 +798,9 @@ async def comment_reel(reel_id: str, request: Request, user=Depends(current_user
                "text": text, "status": "approved", "created_at": datetime.now(timezone.utc).isoformat()}
     comment_for_db = {**comment, "user_id": oid(user["id"])}
     await db.reels.update_one({"_id": oid(reel_id)}, {"$push": {"comments": comment_for_db}})
+    reel = await db.reels.find_one({"_id": oid(reel_id)})
+    if reel and str(reel["creator_id"]) != user["id"]:
+        await notify(reel["creator_id"], "comment", f"{user['name']} commented on your reel", "/reels")
     return comment
 
 
@@ -667,6 +824,8 @@ class ProductIn(BaseModel):
     images: list[str] = []
     product_type: str = "physical"
     tags: list[str] = []
+    discount_pct: int = 0
+    variations: list[dict] = []
 
 
 @api_router.post("/products")
@@ -709,6 +868,12 @@ async def list_products(q: str = "", category: str = "", product_type: str = "",
     if seller_id:
         query["seller_id"] = oid(seller_id)
     items = await db.products.find(query).sort("created_at", -1).limit(limit).to_list(limit)
+    return [pub(i) for i in items]
+
+
+@api_router.get("/products/trending")
+async def trending_products():
+    items = await db.products.find({"status": "approved"}).sort([("views", -1), ("sales", -1)]).limit(10).to_list(10)
     return [pub(i) for i in items]
 
 
@@ -773,7 +938,8 @@ async def update_product(product_id: str, request: Request, user=Depends(current
     if str(prod["seller_id"]) not in {user["id"], user.get("company_id", "")} and user["role"] not in ADMIN_ROLES:
         raise HTTPException(403, "Not your product")
     body = await request.json()
-    allowed = {"title", "description", "price", "stock", "images", "category", "subcategory", "tags", "product_type"}
+    allowed = {"title", "description", "price", "stock", "images", "category", "subcategory", "tags", "product_type",
+               "discount_pct", "variations"}
     await db.products.update_one({"_id": prod["_id"]}, {"$set": {k: v for k, v in body.items() if k in allowed}})
     return pub(await db.products.find_one({"_id": prod["_id"]}))
 
@@ -817,7 +983,11 @@ async def get_cart(user=Depends(current_user)):
         for it in cart.get("items", []):
             prod = await db.products.find_one({"_id": it["product_id"]})
             if prod:
-                items.append({**pub(prod), "qty": it["qty"], "saved": it.get("saved", False)})
+                disc = prod.get("discount_pct", 0)
+                delta = next((v.get("delta", 0) for v in prod.get("variations", []) if v.get("name") == it.get("variation")), 0)
+                final_price = round(prod["price"] * (1 - disc / 100) + delta, 2)
+                items.append({**pub(prod), "qty": it["qty"], "saved": it.get("saved", False),
+                              "variation": it.get("variation", ""), "final_price": final_price})
     return {"items": items}
 
 
@@ -826,15 +996,24 @@ async def add_to_cart(request: Request, user=Depends(current_user)):
     body = await request.json()
     pid = oid(body["product_id"])
     qty = max(1, int(body.get("qty", 1)))
-    if not await db.products.find_one({"_id": pid}):
+    variation = body.get("variation", "")
+    prod = await db.products.find_one({"_id": pid})
+    if not prod:
         raise HTTPException(404, "Product not found")
+    if variation and variation not in [v.get("name") for v in prod.get("variations", [])]:
+        raise HTTPException(400, "Invalid variation")
     cart = await db.carts.find_one({"user_id": oid(user["id"])})
-    if cart and any(i["product_id"] == pid for i in cart.get("items", [])):
-        await db.carts.update_one({"user_id": oid(user["id"]), "items.product_id": pid},
-                                  {"$inc": {"items.$.qty": qty}})
+    match = None
+    if cart:
+        match = next((i for i in cart.get("items", []) if i["product_id"] == pid and i.get("variation", "") == variation and not i.get("saved")), None)
+    if match:
+        await db.carts.update_one(
+            {"user_id": oid(user["id"])},
+            {"$inc": {"items.$[elem].qty": qty}},
+            array_filters=[{"elem.product_id": pid, "elem.variation": variation, "elem.saved": {"$ne": True}}])
     else:
         await db.carts.update_one({"user_id": oid(user["id"])},
-                                  {"$push": {"items": {"product_id": pid, "qty": qty}}}, upsert=True)
+                                  {"$push": {"items": {"product_id": pid, "qty": qty, "variation": variation}}}, upsert=True)
     return {"ok": True}
 
 
@@ -903,23 +1082,47 @@ async def create_payment(request: Request, user=Depends(current_user)):
     if amount <= 0:
         raise HTTPException(400, "Invalid amount")
     order = {
-        "order_id": f"order_mock_{uuid.uuid4().hex[:16]}", "amount": amount,
-        "currency": "INR", "purpose": body.get("purpose", "order"),
+        "amount": amount, "currency": "INR", "purpose": body.get("purpose", "order"),
         "ref_id": body.get("ref_id", ""), "user_id": oid(user["id"]),
         "status": "created", "created_at": datetime.now(timezone.utc),
     }
+    if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET and _razorpay:
+        rzp = _razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+        rzp_order = rzp.order.create({"amount": int(round(amount * 100)), "currency": "INR",
+                                      "receipt": f"sk_{uuid.uuid4().hex[:12]}"})
+        order["order_id"] = rzp_order["id"]
+        order["gateway"] = "razorpay"
+        await db.payment_orders.insert_one(order)
+        out = pub(order)
+        out["razorpay"] = True
+        out["key_id"] = RAZORPAY_KEY_ID
+        return out
+    order["order_id"] = f"order_mock_{uuid.uuid4().hex[:16]}"
+    order["gateway"] = "mock"
     await db.payment_orders.insert_one(order)
     return pub(order)
 
 
 @api_router.post("/payments/verify")
 async def verify_payment(request: Request, user=Depends(current_user)):
-    # MOCKED gateway: always succeeds. Swap with Razorpay signature verification when keys are configured.
     body = await request.json()
     order = await db.payment_orders.find_one({"order_id": body.get("order_id", "")})
     if not order or order["status"] != "created":
         raise HTTPException(400, "Invalid payment order")
-    payment_id = f"pay_mock_{uuid.uuid4().hex[:14]}"
+    if order.get("gateway") == "razorpay":
+        try:
+            rzp = _razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+            rzp.utility.verify_payment_signature({
+                "razorpay_order_id": order["order_id"],
+                "razorpay_payment_id": body.get("razorpay_payment_id", ""),
+                "razorpay_signature": body.get("razorpay_signature", ""),
+            })
+        except Exception:
+            raise HTTPException(400, "Payment signature verification failed")
+        payment_id = body["razorpay_payment_id"]
+    else:
+        # MOCKED gateway: always succeeds. Set RAZORPAY_KEY_ID/SECRET to enable live Razorpay checkout.
+        payment_id = f"pay_mock_{uuid.uuid4().hex[:14]}"
     await db.payment_orders.update_one({"_id": order["_id"]}, {"$set": {"status": "paid"}})
     pres = await db.payments.insert_one({
         "payment_id": payment_id, "order_id": order["order_id"], "user_id": oid(user["id"]),
@@ -944,6 +1147,16 @@ async def checkout(request: Request, user=Depends(current_user)):
     method = body.get("payment_method", "upi")
     if method not in {"upi", "card", "netbanking", "wallet"}:
         raise HTTPException(400, "Invalid payment method")
+    address = body.get("address", "")
+    addr_id = body.get("address_id", "")
+    if addr_id:
+        me_doc = await db.users.find_one({"_id": oid(user["id"])})
+        addr = next((a for a in (me_doc or {}).get("addresses", []) if a["id"] == addr_id), None)
+        if not addr:
+            raise HTTPException(400, "Address not found")
+        address = f"{addr['label']}: {addr['line']}, {addr['city']} — {addr['pin']}"
+    if not address:
+        raise HTTPException(400, "Delivery address required")
     cart = await db.carts.find_one({"user_id": oid(user["id"])})
     if not cart or not cart.get("items"):
         raise HTTPException(400, "Cart is empty")
@@ -958,10 +1171,13 @@ async def checkout(request: Request, user=Depends(current_user)):
             continue
         if prod["product_type"] == "physical" and prod["stock"] < it["qty"]:
             raise HTTPException(400, f"Insufficient stock for {prod['title']}")
-        subtotal += prod["price"] * it["qty"]
+        delta = next((v.get("delta", 0) for v in prod.get("variations", []) if v.get("name") == it.get("variation")), 0)
+        price = round(prod["price"] * (1 - prod.get("discount_pct", 0) / 100) + delta, 2)
+        subtotal += price * it["qty"]
         has_physical = has_physical or prod["product_type"] == "physical"
-        items.append({"product_id": prod["_id"], "title": prod["title"], "price": prod["price"],
-                      "qty": it["qty"], "seller_id": prod["seller_id"], "seller_name": prod["seller_name"],
+        items.append({"product_id": prod["_id"], "title": prod["title"], "price": price,
+                      "qty": it["qty"], "variation": it.get("variation", ""),
+                      "seller_id": prod["seller_id"], "seller_name": prod["seller_name"],
                       "product_type": prod["product_type"],
                       "image": prod["images"][0] if prod.get("images") else ""})
     if not items:
@@ -970,7 +1186,7 @@ async def checkout(request: Request, user=Depends(current_user)):
     order = {
         "buyer_id": oid(user["id"]), "buyer_name": user["name"], "items": items,
         **fees, "payment_method": method, "status": "payment_pending",
-        "address": body.get("address", ""), "courier": "", "tracking_id": "",
+        "address": address, "courier": "", "tracking_id": "",
         "created_at": datetime.now(timezone.utc),
     }
     res = await db.orders.insert_one(order)
@@ -1046,6 +1262,132 @@ async def deliver_order(order_id: str, user=Depends(current_user)):
     for sid in {str(i["seller_id"]) for i in order["items"]}:
         await notify(sid, "payment", "Escrow released — payment credited", "/dashboard")
     return pub(await db.orders.find_one({"_id": order["_id"]}))
+
+
+ORDER_TRANSITIONS = {
+    "accept": ("placed", "accepted", "seller"),
+    "reject": ("placed", "cancelled", "seller"),
+    "processing": ("accepted", "processing", "seller"),
+    "shipped": (("accepted", "processing"), "shipped", "seller"),
+    "delivered": ("shipped", "delivered", "buyer"),
+    "completed": ("delivered", "completed", "buyer"),
+}
+
+
+@api_router.post("/orders/{order_id}/status")
+async def update_order_status(order_id: str, request: Request, user=Depends(current_user)):
+    body = await request.json()
+    action = body.get("action", "")
+    if action not in ORDER_TRANSITIONS:
+        raise HTTPException(400, "Invalid action")
+    order = await db.orders.find_one({"_id": oid(order_id)})
+    if not order:
+        raise HTTPException(404, "Order not found")
+    from_states, to_state, actor = ORDER_TRANSITIONS[action]
+    if isinstance(from_states, str):
+        from_states = (from_states,)
+    is_buyer = str(order["buyer_id"]) == user["id"]
+    seller_ids = {user["id"], user.get("company_id", "")}
+    is_seller = any(str(i["seller_id"]) in seller_ids for i in order["items"]) or user["role"] in ADMIN_ROLES
+    if actor == "buyer" and not is_buyer:
+        raise HTTPException(403, "Only the buyer can do this")
+    if actor == "seller" and not is_seller:
+        raise HTTPException(403, "Only the seller can do this")
+    if order["status"] not in from_states:
+        raise HTTPException(400, f"Order cannot move from {order['status']} via {action}")
+    update = {"status": to_state, f"{to_state}_at": datetime.now(timezone.utc)}
+    if action == "shipped":
+        courier = body.get("courier", "")
+        if courier not in COURIERS:
+            raise HTTPException(400, "Select a valid courier partner")
+        update["courier"] = courier
+        update["tracking_id"] = body.get("tracking_id", "")
+    if action == "reject":
+        await db.payments.update_many({"ref_id": order_id, "purpose": "order", "escrow": "held"},
+                                      {"$set": {"escrow": "refunded", "refunded_at": datetime.now(timezone.utc)}})
+    if action == "delivered":
+        await release_escrow(order_id, "order")
+    await db.orders.update_one({"_id": order["_id"]}, {"$set": update})
+    if actor == "seller":
+        await notify(order["buyer_id"], "order", f"Order update: {to_state.replace('_', ' ')}", "/orders")
+    else:
+        for sid in {str(i["seller_id"]) for i in order["items"]}:
+            await notify(sid, "order", f"Order {to_state.replace('_', ' ')} by customer", "/orders")
+    return pub(await db.orders.find_one({"_id": order["_id"]}))
+
+
+# ---------------- Collections ----------------
+
+async def hydrate_collection(c):
+    out = pub(c)
+    products = []
+    for pid in c.get("product_ids", [])[:12]:
+        p = await db.products.find_one({"_id": pid})
+        if p:
+            products.append(pub(p))
+    out["products"] = products
+    return out
+
+
+@api_router.post("/collections")
+async def create_collection(request: Request, user=Depends(current_user)):
+    body = await request.json()
+    if not body.get("name"):
+        raise HTTPException(400, "Collection name required")
+    doc = {"user_id": oid(user["id"]), "name": body["name"], "description": body.get("description", ""),
+           "product_ids": [], "featured": False, "created_at": datetime.now(timezone.utc)}
+    res = await db.collections.insert_one(doc)
+    return pub(await db.collections.find_one({"_id": res.inserted_id}))
+
+
+@api_router.get("/collections")
+async def my_collections(user=Depends(current_user)):
+    cols = await db.collections.find({"user_id": oid(user["id"])}).sort("created_at", -1).to_list(50)
+    return [await hydrate_collection(c) for c in cols]
+
+
+@api_router.get("/collections/featured")
+async def featured_collections():
+    cols = await db.collections.find({"featured": True}).limit(6).to_list(6)
+    return [await hydrate_collection(c) for c in cols]
+
+
+@api_router.get("/users/{user_id}/collections")
+async def user_collections(user_id: str):
+    cols = await db.collections.find({"user_id": oid(user_id)}).sort("created_at", -1).to_list(50)
+    return [await hydrate_collection(c) for c in cols]
+
+
+@api_router.post("/collections/{collection_id}/items")
+async def toggle_collection_item(collection_id: str, request: Request, user=Depends(current_user)):
+    body = await request.json()
+    pid = oid(body["product_id"])
+    col = await db.collections.find_one({"_id": oid(collection_id), "user_id": oid(user["id"])})
+    if not col:
+        raise HTTPException(404, "Collection not found")
+    if pid in col.get("product_ids", []):
+        await db.collections.update_one({"_id": col["_id"]}, {"$pull": {"product_ids": pid}})
+        return {"added": False}
+    await db.collections.update_one({"_id": col["_id"]}, {"$addToSet": {"product_ids": pid}})
+    return {"added": True}
+
+
+@api_router.delete("/collections/{collection_id}")
+async def delete_collection(collection_id: str, user=Depends(current_user)):
+    res = await db.collections.delete_one({"_id": oid(collection_id), "user_id": oid(user["id"])})
+    if not res.deleted_count:
+        raise HTTPException(404, "Collection not found")
+    return {"ok": True}
+
+
+@api_router.post("/admin/collections/{collection_id}/feature")
+async def feature_collection(collection_id: str, user=Depends(require(*ADMIN_ROLES))):
+    col = await db.collections.find_one({"_id": oid(collection_id)})
+    if not col:
+        raise HTTPException(404, "Collection not found")
+    new_val = not col.get("featured", False)
+    await db.collections.update_one({"_id": col["_id"]}, {"$set": {"featured": new_val}})
+    return {"featured": new_val}
 
 
 # ---------------- Custom Requests ----------------
@@ -1259,6 +1601,67 @@ async def complete_custom_request(cr_id: str, user=Depends(current_user)):
     return pub(await db.custom_requests.find_one({"_id": cr["_id"]}))
 
 
+async def cr_participant_check(user, cr):
+    if user["role"] in STAFF_ROLES or str(cr["customer_id"]) == user["id"]:
+        return
+    if cr["target_type"] == "company":
+        company = await db.companies.find_one({"_id": oid(cr["target_id"])})
+        if company and any(str(m["user_id"]) == user["id"] for m in company["members"]):
+            return
+    elif str(cr["target_id"]) == user["id"]:
+        return
+    raise HTTPException(403, "Not a participant")
+
+
+@api_router.post("/custom-requests/{cr_id}/messages")
+async def message_custom_request(cr_id: str, request: Request, user=Depends(current_user)):
+    cr = await db.custom_requests.find_one({"_id": oid(cr_id)})
+    if not cr:
+        raise HTTPException(404, "Request not found")
+    await cr_participant_check(user, cr)
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, "Message text required")
+    msg = {"id": uuid.uuid4().hex[:10], "from": user["name"], "user_id": str(oid(user["id"])),
+           "text": text, "at": datetime.now(timezone.utc).isoformat()}
+    await db.custom_requests.update_one({"_id": cr["_id"]}, {"$push": {"messages": msg}})
+    other = cr["target_id"] if str(cr["customer_id"]) == user["id"] else str(cr["customer_id"])
+    if cr["target_type"] == "company" and str(cr["customer_id"]) == user["id"]:
+        company = await db.companies.find_one({"_id": oid(other)})
+        for m in (company["members"] if company else []):
+            if m["role"] in {"owner", "admin"}:
+                await notify(m["user_id"], "message", f"New message on '{cr['title']}'", "/custom-orders")
+    else:
+        await notify(oid(other), "message", f"New message on '{cr['title']}'", "/custom-orders")
+    return msg
+
+
+@api_router.post("/custom-requests/{cr_id}/counter")
+async def counter_custom_request(cr_id: str, request: Request, user=Depends(current_user)):
+    cr = await db.custom_requests.find_one({"_id": oid(cr_id)})
+    if not cr or str(cr["customer_id"]) != user["id"] or cr["status"] != "estimated":
+        raise HTTPException(400, "Request not open to negotiation")
+    body = await request.json()
+    cost = float(body.get("cost", 0))
+    if cost <= 0:
+        raise HTTPException(400, "Counter price required")
+    history = cr.get("history", []) + [{"status": "counter", "at": datetime.now(timezone.utc).isoformat(),
+                                        "by": user["name"], "cost": cost,
+                                        "message": body.get("message", "")}]
+    await db.custom_requests.update_one({"_id": cr["_id"]},
+                                        {"$set": {"status": "sent_to_creator", "history": history,
+                                                  "counter": {"cost": cost, "by": user["name"]}}})
+    if cr["target_type"] == "company":
+        company = await db.companies.find_one({"_id": oid(cr["target_id"])})
+        for m in (company["members"] if company else []):
+            if m["role"] in {"owner", "admin"}:
+                await notify(m["user_id"], "custom_request", f"Counter offer ₹{cost:,.0f} on '{cr['title']}'", "/custom-orders")
+    else:
+        await notify(oid(cr["target_id"]), "custom_request", f"Counter offer ₹{cost:,.0f} on '{cr['title']}'", "/custom-orders")
+    return pub(await db.custom_requests.find_one({"_id": cr["_id"]}))
+
+
 # ---------------- Support ----------------
 
 @api_router.post("/tickets")
@@ -1374,6 +1777,16 @@ async def admin_user_status(user_id: str, request: Request, user=Depends(require
         raise HTTPException(400, "Invalid status")
     await db.users.update_one({"_id": oid(user_id)}, {"$set": {"status": body["status"]}})
     return public_user(await db.users.find_one({"_id": oid(user_id)}))
+
+
+@api_router.post("/admin/users/{user_id}/verify")
+async def admin_verify_user(user_id: str, user=Depends(require(*ADMIN_ROLES))):
+    target = await db.users.find_one({"_id": oid(user_id)})
+    if not target:
+        raise HTTPException(404, "User not found")
+    new_val = not target.get("verified", False)
+    await db.users.update_one({"_id": target["_id"]}, {"$set": {"verified": new_val}})
+    return {"verified": new_val}
 
 
 @api_router.post("/admin/users")
