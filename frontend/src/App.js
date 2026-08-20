@@ -27,6 +27,7 @@ import EnquiryPage from "@/pages/EnquiryPage";
 import VerificationPage from "@/pages/VerificationPage";
 import StaticPage from "@/pages/StaticPage";
 import OrderDetailPage from "@/pages/OrderDetailPage";
+import ChatPage from "@/pages/ChatPage";
 
 const ThemeContext = createContext(null);
 export const useTheme = () => useContext(ThemeContext);
@@ -95,6 +96,7 @@ export default function App() {
               <Route path="/company" element={<RequireAuth><CompanyPage /></RequireAuth>} />
               <Route path="/admin" element={<RequireAuth roles={["super_admin", "admin", "support"]}><AdminPage /></RequireAuth>} />
               <Route path="/support" element={<RequireAuth><SupportPage /></RequireAuth>} />
+              <Route path="/chat" element={<RequireAuth><ChatPage /></RequireAuth>} />
               <Route path="/notifications" element={<RequireAuth><NotificationsPage /></RequireAuth>} />
               <Route path="/settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
               <Route path="/saved" element={<RequireAuth><SavedPage /></RequireAuth>} />

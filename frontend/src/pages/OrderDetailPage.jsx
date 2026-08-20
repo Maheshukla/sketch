@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, MapPin, Truck } from "lucide-react";
-import api, { inr, fileUrl } from "@/lib/api";
+import { ArrowLeft, MapPin, MessageSquare, Truck } from "lucide-react";
+import { toast } from "sonner";
+import api, { fmtErr, inr, fileUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PageHeader, StatusBadge, WhatsAppButton } from "@/components/cards";
 
 const SELLER_ROLES = ["artist", "retailer", "company_owner", "company_admin", "company_artist"];
+const DISPUTABLE = ["placed", "accepted", "processing", "shipped", "out_for_delivery", "delivered"];
 
 export default function OrderDetailPage() {
   const { id } = useParams();
@@ -14,10 +18,39 @@ export default function OrderDetailPage() {
   const navigate = useNavigate();
   const [order, setOrder] = useState(null);
   const [error, setError] = useState(false);
+  const [disputeOpen, setDisputeOpen] = useState(false);
+  const [disputeReason, setDisputeReason] = useState("");
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     api.get(`/orders/${id}`).then((r) => setOrder(r.data)).catch(() => setError(true));
   }, [id]);
+
+  const openChat = async () => {
+    try {
+      const { data } = await api.post("/chat/threads", { kind: "order", order_id: order.id });
+      navigate(`/chat?thread=${data.id}`);
+    } catch (e) {
+      toast.error(fmtErr(e));
+    }
+  };
+
+  const submitDispute = async () => {
+    if (!disputeReason.trim()) return toast.error("Describe the issue");
+    setBusy(true);
+    try {
+      await api.post(`/orders/${order.id}/dispute`, { reason: disputeReason });
+      toast.success("Dispute raised — our team will review it");
+      setDisputeOpen(false);
+      setDisputeReason("");
+      const { data } = await api.get(`/orders/${order.id}`);
+      setOrder(data);
+    } catch (e) {
+      toast.error(fmtErr(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   if (error) {
     return (
@@ -46,6 +79,22 @@ export default function OrderDetailPage() {
         <StatusBadge status={order.status} />
         <StatusBadge status={order.payment_status || "pending"} />
         {order.payment && <StatusBadge status={order.payment.escrow} />}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 mb-8">
+        <Button data-testid="order-chat-btn" variant="outline" onClick={openChat} className="rounded-none font-meta text-[10px]">
+          <MessageSquare className="h-3.5 w-3.5 mr-1.5" /> {isSeller ? "Chat with buyer" : "Chat with seller"}
+        </Button>
+        {!isSeller && DISPUTABLE.includes(order.status) && (
+          <Button data-testid="order-dispute-btn" variant="outline" onClick={() => setDisputeOpen(true)}
+            className="rounded-none font-meta text-[10px] text-primary border-primary/40">Raise dispute</Button>
+        )}
+        {order.dispute && (
+          <p className="w-full text-xs text-muted-foreground border-l-2 border-primary pl-3 mt-2" data-testid="order-dispute-info">
+            Dispute ({order.dispute.status}): {order.dispute.reason}
+            {order.dispute.resolution && ` — resolved: ${order.dispute.resolution}${order.dispute.note ? ` (${order.dispute.note})` : ""}`}
+          </p>
+        )}
       </div>
 
       <div className="grid lg:grid-cols-[1fr_360px] gap-8">
@@ -129,6 +178,20 @@ export default function OrderDetailPage() {
           <WhatsAppButton reference={`order #${order.id.slice(-8)}`} testid="order-whatsapp" />
         </aside>
       </div>
+
+      <Dialog open={disputeOpen} onOpenChange={setDisputeOpen}>
+        <DialogContent className="rounded-none max-w-md" data-testid="dispute-modal">
+          <DialogHeader>
+            <DialogTitle className="font-display">Raise a dispute</DialogTitle>
+            <DialogDescription className="text-sm">Your payment stays in escrow while our team reviews. All sales are final unless a dispute is resolved in your favour.</DialogDescription>
+          </DialogHeader>
+          <Textarea data-testid="dispute-reason" className="rounded-none" rows={4} placeholder="Describe the issue (item not received, damaged, not as described...)"
+            value={disputeReason} onChange={(e) => setDisputeReason(e.target.value)} />
+          <Button data-testid="dispute-submit" onClick={submitDispute} disabled={busy} className="rounded-none font-meta text-[10px] h-11">
+            {busy ? "Submitting..." : "Submit dispute"}
+          </Button>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

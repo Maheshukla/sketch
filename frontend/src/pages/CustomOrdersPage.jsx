@@ -99,20 +99,54 @@ function RequestCard({ req, user, reload }) {
 
   const stepIdx = FLOW.indexOf(req.status);
   const payable = req.estimate ? (req.payment_type === "advance" ? Math.round(req.estimate.cost * 0.3) : req.estimate.cost) : 0;
+  const balanceDue = req.estimate && req.payment_type === "advance" ? Math.round(req.estimate.cost * 0.7) : 0;
 
-  const startPayment = () =>
+  const startPayment = (kind = "initial") =>
     act(async () => {
-      const po = await api.post("/payments/create", { amount: payable, purpose: "custom", ref_id: req.id });
-      setPayInfo(po.data);
-      setPayOpen(true);
+      const amount = kind === "balance" ? balanceDue : payable;
+      const po = await api.post("/payments/create", { amount, purpose: kind === "balance" ? "custom_balance" : "custom", ref_id: req.id });
+      if (po.data.razorpay) {
+        await loadRazorpay();
+        const rzp = new window.Razorpay({
+          key: po.data.key_id,
+          order_id: po.data.order_id,
+          amount: Math.round(amount * 100),
+          currency: "INR",
+          name: "Sketch",
+          description: kind === "balance" ? "Custom order balance payment" : "Custom order payment",
+          theme: { color: "#E63946" },
+          prefill: { name: user.name, email: user.email },
+          handler: async (resp) => {
+            try {
+              const verified = await api.post("/payments/verify", {
+                order_id: po.data.order_id,
+                razorpay_payment_id: resp.razorpay_payment_id,
+                razorpay_signature: resp.razorpay_signature,
+                method: "upi",
+              });
+              await api.post(kind === "balance" ? `/custom-requests/${req.id}/pay-balance` : `/custom-requests/${req.id}/pay`,
+                { payment_db_id: verified.data.id });
+              toast.success(kind === "balance" ? "Balance paid — held in escrow" : "Payment held in escrow");
+              reload();
+            } catch (e) {
+              toast.error(fmtErr(e));
+            }
+          },
+        });
+        rzp.open();
+      } else {
+        setPayInfo({ ...po.data, kind, amount });
+        setPayOpen(true);
+      }
     });
 
   const confirmPay = () =>
     act(async () => {
       const verified = await api.post("/payments/verify", { order_id: payInfo.order_id, method: "upi" });
-      await api.post(`/custom-requests/${req.id}/pay`, { payment_db_id: verified.data.id });
+      await api.post(payInfo.kind === "balance" ? `/custom-requests/${req.id}/pay-balance` : `/custom-requests/${req.id}/pay`,
+        { payment_db_id: verified.data.id });
       setPayOpen(false);
-    }, "Payment held in escrow");
+    }, payInfo?.kind === "balance" ? "Balance paid — held in escrow" : "Payment held in escrow");
 
   return (
     <div className="border border-border/60 p-6" data-testid={`cr-card-${req.id}`}>
@@ -218,7 +252,7 @@ function RequestCard({ req, user, reload }) {
       )}
 
       {isCustomer && req.status === "approved" && (
-        <Button data-testid={`cr-pay-${req.id}`} disabled={busy} onClick={startPayment} className="rounded-none font-meta text-[10px] mt-5">
+        <Button data-testid={`cr-pay-${req.id}`} disabled={busy} onClick={() => startPayment("initial")} className="rounded-none font-meta text-[10px] mt-5">
           Pay {inr(payable)} ({req.payment_type === "advance" ? "advance" : "full"})
         </Button>
       )}
@@ -265,9 +299,17 @@ function RequestCard({ req, user, reload }) {
           {req.delivery_images?.map((img, i) => (
             <img key={i} src={img} alt="" className="h-32 inline-block mr-2 mb-2 border border-border/60 object-cover" />
           ))}
-          <Button data-testid={`cr-complete-${req.id}`} disabled={busy}
-            onClick={() => act(() => api.post(`/custom-requests/${req.id}/complete`), "Order completed — escrow released")}
-            className="rounded-none font-meta text-[10px] block">Approve & complete order</Button>
+          {req.payment_type === "advance" && !req.balance_paid ? (
+            <div data-testid={`cr-balance-due-${req.id}`}>
+              <p className="text-xs text-muted-foreground mb-3">Balance of {inr(balanceDue)} (70%) is due before completion.</p>
+              <Button data-testid={`cr-pay-balance-${req.id}`} disabled={busy} onClick={() => startPayment("balance")}
+                className="rounded-none font-meta text-[10px]">Pay balance {inr(balanceDue)}</Button>
+            </div>
+          ) : (
+            <Button data-testid={`cr-complete-${req.id}`} disabled={busy}
+              onClick={() => act(() => api.post(`/custom-requests/${req.id}/complete`), "Order completed — escrow released")}
+              className="rounded-none font-meta text-[10px] block">Approve & complete order</Button>
+          )}
         </div>
       )}
 
@@ -298,8 +340,8 @@ function RequestCard({ req, user, reload }) {
             <DialogTitle className="font-display">Sketch Pay — Demo Gateway</DialogTitle>
             <DialogDescription className="sr-only">Confirm your demo payment for this custom order</DialogDescription>
           </DialogHeader>
-          <p className="font-display text-3xl font-black" data-testid="cr-gateway-amount">{inr(payable)}</p>
-          <p className="font-meta text-[9px] text-muted-foreground">{req.payment_type} payment · held in escrow until completion</p>
+          <p className="font-display text-3xl font-black" data-testid="cr-gateway-amount">{inr(payInfo?.amount ?? payable)}</p>
+          <p className="font-meta text-[9px] text-muted-foreground">{payInfo?.kind === "balance" ? "balance" : req.payment_type} payment · held in escrow until completion</p>
           <Button data-testid="cr-gateway-confirm" onClick={confirmPay} disabled={busy} className="w-full rounded-none font-meta text-[11px] h-11">
             Confirm payment
           </Button>
@@ -307,4 +349,15 @@ function RequestCard({ req, user, reload }) {
       </Dialog>
     </div>
   );
+}
+
+function loadRazorpay() {
+  return new Promise((resolve, reject) => {
+    if (window.Razorpay) return resolve();
+    const s = document.createElement("script");
+    s.src = "https://checkout.razorpay.com/v1/checkout.js";
+    s.onload = resolve;
+    s.onerror = () => reject(new Error("Failed to load Razorpay checkout"));
+    document.body.appendChild(s);
+  });
 }

@@ -4,6 +4,9 @@ Covers: auth (email/pwd, OTP, refresh), profiles, reels, products, cart/wishlist
 orders + mock payment escrow, custom-request full flow, company mgmt,
 support tickets, notifications, admin moderation/overview, RBAC.
 """
+import hashlib
+import hmac
+import json
 import os
 import re
 import time
@@ -35,6 +38,33 @@ def _sess(email=None, pwd=None):
         r = s.post(f"{API}/auth/login", json={"email": email, "password": pwd})
         assert r.status_code == 200, f"login {email} failed: {r.status_code} {r.text}"
     return s
+
+
+def _env(key):
+    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+    try:
+        for line in open(env_path):
+            if line.startswith(key + "="):
+                return line.split("=", 1)[1].strip().strip('"')
+    except FileNotFoundError:
+        pass
+    return os.environ.get(key, "")
+
+
+def _pay(sess, amount, purpose, ref_id):
+    """Create + verify a payment end-to-end. Signs with HMAC when Razorpay is live."""
+    pc = sess.post(f"{API}/payments/create", json={"amount": amount, "purpose": purpose, "ref_id": ref_id})
+    assert pc.status_code == 200, pc.text
+    po = pc.json()
+    payload = {"order_id": po["order_id"], "method": "upi"}
+    if po.get("gateway") == "razorpay":
+        pay_id = f"pay_test_{uuid.uuid4().hex[:14]}"
+        sig = hmac.new(_env("RAZORPAY_KEY_SECRET").encode(),
+                       f"{po['order_id']}|{pay_id}".encode(), hashlib.sha256).hexdigest()
+        payload.update({"razorpay_payment_id": pay_id, "razorpay_signature": sig})
+    pv = sess.post(f"{API}/payments/verify", json=payload)
+    assert pv.status_code == 200, pv.text
+    return po, pv.json()
 
 
 # Session fixtures ------------------------------------------------------------
@@ -210,13 +240,8 @@ class TestCheckout:
         assert order["status"] == "payment_pending"
         assert order["total"] > 0
         assert order["tax"] > 0 and order["platform_fee"] > 0
-        # create + verify payment
-        pay1 = customer.post(f"{API}/payments/create", json={"amount": order["total"], "purpose": "order", "ref_id": order_id})
-        assert pay1.status_code == 200
-        po = pay1.json()
-        pay2 = customer.post(f"{API}/payments/verify", json={"order_id": po["order_id"], "method": "upi"})
-        assert pay2.status_code == 200
-        pjson = pay2.json()
+        # create + verify payment (HMAC-signed when Razorpay is live)
+        _, pjson = _pay(customer, order["total"], "order", order_id)
         # pay order
         r = customer.post(f"{API}/orders/{order_id}/pay", json={"payment_db_id": pjson["id"]})
         assert r.status_code == 200
@@ -273,8 +298,7 @@ class TestCustomOrders:
         assert r.json()["status"] == "approved"
         # 5. pay
         amount = 4500 * 0.30
-        pc = customer.post(f"{API}/payments/create", json={"amount": amount, "purpose": "custom", "ref_id": cr_id}).json()
-        pv = customer.post(f"{API}/payments/verify", json={"order_id": pc["order_id"], "method": "upi"}).json()
+        pc, pv = _pay(customer, amount, "custom", cr_id)
         r = customer.post(f"{API}/custom-requests/{cr_id}/pay", json={"payment_db_id": pv["id"]})
         assert r.status_code == 200
         assert r.json()["status"] == "paid"
@@ -284,7 +308,14 @@ class TestCustomOrders:
         # 7. deliver
         r = aarav.post(f"{API}/custom-requests/{cr_id}/deliver", json={"delivery_images": [], "note": "done"})
         assert r.status_code == 200
-        # 8. complete
+        # 8. completion blocked until 70% balance is paid
+        r = customer.post(f"{API}/custom-requests/{cr_id}/complete")
+        assert r.status_code == 400
+        _, bv = _pay(customer, 4500 * 0.70, "custom_balance", cr_id)
+        rb = customer.post(f"{API}/custom-requests/{cr_id}/pay-balance", json={"payment_db_id": bv["id"]})
+        assert rb.status_code == 200, rb.text
+        assert rb.json()["balance_paid"] is True
+        # 9. complete
         r = customer.post(f"{API}/custom-requests/{cr_id}/complete")
         assert r.status_code == 200
         assert r.json()["status"] == "completed"
@@ -471,9 +502,7 @@ class TestSaveForLater:
         assert len(order["items"]) == 1
         assert order["items"][0]["product_id"] == active_pid or True  # id may be stringified oid
         # pay
-        pc = customer.post(f"{API}/payments/create", json={
-            "amount": order["total"], "purpose": "order", "ref_id": order_id}).json()
-        pv = customer.post(f"{API}/payments/verify", json={"order_id": pc["order_id"], "method": "upi"}).json()
+        pc, pv = _pay(customer, order["total"], "order", order_id)
         r = customer.post(f"{API}/orders/{order_id}/pay", json={"payment_db_id": pv["id"]})
         assert r.status_code == 200
         # After pay, saved item should still be in cart, active removed
@@ -776,10 +805,7 @@ class TestOrderLifecycle:
         r = customer.post(f"{API}/orders/checkout",
                           json={"payment_method": "upi", "address_id": aid})
         order = r.json()["order"]
-        pc = customer.post(f"{API}/payments/create", json={
-            "amount": order["total"], "purpose": "order", "ref_id": order["id"]}).json()
-        pv = customer.post(f"{API}/payments/verify", json={
-            "order_id": pc["order_id"], "method": "upi"}).json()
+        pc, pv = _pay(customer, order["total"], "order", order["id"])
         customer.post(f"{API}/orders/{order['id']}/pay", json={"payment_db_id": pv["id"]})
         return order["id"], pv["id"]
 
@@ -972,21 +998,43 @@ class TestCustomRequestMessagesAndCounter:
         assert r.status_code == 400
 
 
-class TestRazorpayFallback:
-    def test_payments_create_returns_mock_gateway(self, customer):
+class TestRazorpayLive:
+    def test_payments_create_returns_razorpay_order(self, customer):
         r = customer.post(f"{API}/payments/create", json={
             "amount": 500, "purpose": "order", "ref_id": "test_ref"})
         assert r.status_code == 200
         d = r.json()
-        # Keys are absent by design in this env — must fall back to mock
-        assert d.get("gateway") == "mock"
-        assert d["order_id"].startswith("order_mock_")
-        assert "razorpay" not in d or d.get("razorpay") is not True
-        # verify succeeds without signature
+        assert d.get("gateway") == "razorpay"
+        assert d["order_id"].startswith("order_")
+        assert d.get("razorpay") is True and d.get("key_id", "").startswith("rzp_")
+
+    def test_verify_rejects_bad_signature(self, customer):
+        po = customer.post(f"{API}/payments/create", json={
+            "amount": 500, "purpose": "order", "ref_id": "test_ref"}).json()
         v = customer.post(f"{API}/payments/verify", json={
-            "order_id": d["order_id"], "method": "upi"})
-        assert v.status_code == 200
-        assert "id" in v.json()
+            "order_id": po["order_id"], "method": "upi",
+            "razorpay_payment_id": "pay_bad", "razorpay_signature": "deadbeef"})
+        assert v.status_code == 400
+
+    def test_verify_accepts_valid_signature(self, customer):
+        _, pv = _pay(customer, 500, "order", "test_ref")
+        assert pv["status"] == "held"
+
+    def test_webhook_signature_verification(self, customer):
+        po = customer.post(f"{API}/payments/create", json={
+            "amount": 500, "purpose": "order", "ref_id": "test_ref"}).json()
+        body = json.dumps({"event": "payment.captured", "payload": {"payment": {"entity": {
+            "id": f"pay_wh_{uuid.uuid4().hex[:10]}", "order_id": po["order_id"], "method": "upi"}}}})
+        sig = hmac.new(_env("RAZORPAY_WEBHOOK_SECRET").encode(), body.encode(), hashlib.sha256).hexdigest()
+        bad = customer.post(f"{API}/payments/webhook", data=body,
+                            headers={"X-Razorpay-Signature": "bad"})
+        assert bad.status_code == 400
+        ok = customer.post(f"{API}/payments/webhook", data=body,
+                           headers={"X-Razorpay-Signature": sig})
+        assert ok.status_code == 200 and ok.json()["status"] == "processed"
+        # webhook marked the payment order paid -> verify is now rejected (idempotency proof)
+        v = customer.post(f"{API}/payments/verify", json={"order_id": po["order_id"], "method": "upi"})
+        assert v.status_code == 400
 
 
 class TestReelsHashtagAndPagination:
@@ -1279,10 +1327,7 @@ class TestShippingObject:
             return None
         order_id = co.json()["order"]["id"]
         total = co.json()["order"]["total"]
-        pc = customer.post(f"{API}/payments/create",
-                           json={"amount": total, "purpose": "order", "ref_id": order_id}).json()
-        pv = customer.post(f"{API}/payments/verify",
-                           json={"order_id": pc["order_id"], "method": "upi"}).json()
+        pc, pv = _pay(customer, total, "order", order_id)
         customer.post(f"{API}/orders/{order_id}/pay", json={"payment_db_id": pv["id"]})
         return customer.get(f"{API}/orders/{order_id}").json() if False else \
                next((o for o in customer.get(f"{API}/orders").json() if o["id"] == order_id), None)
@@ -1441,3 +1486,223 @@ class TestAdminTabs:
             pytest.skip("no super admin in list (role filter)")
         r = super_admin.delete(f"{API}/admin/users/{users[0]['id']}")
         assert r.status_code == 400
+
+
+
+# ---- Shipping providers endpoint (P2) ----
+class TestShippingProviders:
+    def test_providers_list(self):
+        r = requests.get(f"{API}/shipping/providers")
+        assert r.status_code == 200
+        data = r.json()
+        assert "providers" in data
+        providers = data["providers"]
+        names = {p["name"] for p in providers}
+        assert {"Ekart", "Delhivery", "DTDC", "Blue Dart", "India Post", "Shiprocket"}.issubset(names)
+        # Since SHIPROCKET creds are not configured, all live must be False
+        for p in providers:
+            assert p["live"] is False
+            assert isinstance(p["rate"], (int, float))
+
+
+# ---- Chat threads (P1) ----
+class TestChat:
+    def test_support_thread_create_and_message(self, customer, support):
+        # customer creates support thread
+        r = customer.post(f"{API}/chat/threads", json={"kind": "support"})
+        assert r.status_code == 200, r.text
+        t = r.json()
+        assert t["kind"] == "support"
+        tid = t["id"]
+        # Idempotent — creating again returns same thread
+        r2 = customer.post(f"{API}/chat/threads", json={"kind": "support"})
+        assert r2.json()["id"] == tid
+        # send msg
+        r = customer.post(f"{API}/chat/threads/{tid}/messages", json={"text": "TEST_hello support"})
+        assert r.status_code == 200, r.text
+        msg = r.json()
+        assert msg["text"] == "TEST_hello support"
+        assert msg["staff"] is False
+        # support sees it via list
+        threads = support.get(f"{API}/chat/threads").json()
+        assert any(x["id"] == tid for x in threads)
+        # support replies
+        r = support.post(f"{API}/chat/threads/{tid}/messages", json={"text": "TEST_hi from support"})
+        assert r.status_code == 200
+        assert r.json()["staff"] is True
+        # GET single thread
+        det = customer.get(f"{API}/chat/threads/{tid}").json()
+        assert len(det["messages"]) >= 2
+
+    def test_empty_message_rejected(self, customer):
+        r = customer.post(f"{API}/chat/threads", json={"kind": "support"})
+        tid = r.json()["id"]
+        r = customer.post(f"{API}/chat/threads/{tid}/messages", json={"text": "   "})
+        assert r.status_code == 400
+
+    def test_non_participant_cannot_access_thread(self, customer, meera):
+        # customer creates order-less support thread — meera should not access
+        r = customer.post(f"{API}/chat/threads", json={"kind": "support"})
+        tid = r.json()["id"]
+        r = meera.get(f"{API}/chat/threads/{tid}")
+        assert r.status_code in (403, 404)
+
+
+# ---- Disputes (P1) ----
+class TestDisputes:
+    def _create_delivered_order(self, customer):
+        """Reuse TestShippingObject pattern to reach a 'placed' order minimally."""
+        prods = requests.get(f"{API}/products").json()
+        meera_id = requests.post(f"{API}/auth/login", json={
+            "email": CREDS["meera"][0], "password": CREDS["meera"][1]}).json()["id"]
+        target = next((p for p in prods if p.get("seller_id") == meera_id
+                       and p.get("product_type") == "physical" and p.get("stock", 0) > 0), None)
+        if not target:
+            return None
+        customer.delete(f"{API}/cart/{target['id']}")
+        customer.post(f"{API}/cart", json={"product_id": target["id"], "qty": 1})
+        # add default address
+        addr_payload = {"label": "Home", "full_name": "TEST User", "mobile": "9876543210",
+                        "house": "1", "area": "Area", "city": "City", "state": "Karnataka",
+                        "pin": "560001"}
+        customer.post(f"{API}/users/me/addresses", json=addr_payload)
+        addrs = customer.get(f"{API}/users/me/addresses").json()
+        aid = addrs[0]["id"] if isinstance(addrs, list) and addrs else None
+        co = customer.post(f"{API}/orders/checkout",
+                           json={"payment_method": "upi", "address_id": aid})
+        if co.status_code != 200:
+            return None
+        order_id = co.json()["order"]["id"]
+        total = co.json()["order"]["total"]
+        _, pv = _pay(customer, total, "order", order_id)
+        customer.post(f"{API}/orders/{order_id}/pay", json={"payment_db_id": pv["id"]})
+        return order_id
+
+    def test_dispute_raise_and_refund(self, customer, admin):
+        order_id = self._create_delivered_order(customer)
+        if not order_id:
+            pytest.skip("could not create order")
+        # raise dispute
+        r = customer.post(f"{API}/orders/{order_id}/dispute",
+                          json={"reason": "TEST_defective product refund me"})
+        assert r.status_code == 200, r.text
+        o = r.json()
+        assert o["status"] == "disputed"
+        assert o["dispute"]["status"] == "open"
+        # empty reason -> 400
+        r = customer.post(f"{API}/orders/{order_id}/dispute", json={"reason": ""})
+        # already disputed status, should reject
+        assert r.status_code == 400
+        # admin sees dispute in queue
+        disputes = admin.get(f"{API}/admin/disputes").json()
+        assert any(d["id"] == order_id for d in disputes), f"dispute not found in queue"
+        # resolve as refund
+        r = admin.post(f"{API}/admin/orders/{order_id}/resolve-dispute",
+                       json={"action": "refund", "note": "TEST_approved"})
+        assert r.status_code == 200, r.text
+        o = r.json()
+        assert o["status"] == "refunded"
+        assert o["payment_status"] == "refunded"
+        assert o["dispute"]["status"] == "resolved"
+        assert o["dispute"]["resolution"] == "refund"
+
+    def test_dispute_reject_restores_status(self, customer, admin):
+        order_id = self._create_delivered_order(customer)
+        if not order_id:
+            pytest.skip("could not create order")
+        # get status before dispute
+        before = customer.get(f"{API}/orders/{order_id}").json()
+        prev = before["status"]
+        r = customer.post(f"{API}/orders/{order_id}/dispute",
+                          json={"reason": "TEST_maybe issue"})
+        assert r.status_code == 200
+        r = admin.post(f"{API}/admin/orders/{order_id}/resolve-dispute",
+                       json={"action": "reject", "note": "TEST_not valid"})
+        assert r.status_code == 200
+        o = r.json()
+        assert o["status"] == prev
+        assert o["dispute"]["resolution"] == "reject"
+
+    def test_resolve_invalid_action(self, admin):
+        # any random order id -> 400 for invalid action first
+        r = admin.post(f"{API}/admin/orders/000000000000000000000000/resolve-dispute",
+                       json={"action": "foo"})
+        assert r.status_code == 400
+
+    def test_customer_cannot_access_admin_disputes(self, customer):
+        r = customer.get(f"{API}/admin/disputes")
+        assert r.status_code == 403
+
+
+# ---- Chat with seller for an order (P1) ----
+class TestOrderChat:
+    def test_buyer_can_open_order_thread(self, customer):
+        orders = customer.get(f"{API}/orders").json()
+        order = next((o for o in orders if o["status"] not in {"payment_pending"}), None)
+        if not order:
+            pytest.skip("no order")
+        r = customer.post(f"{API}/chat/threads",
+                          json={"kind": "order", "order_id": order["id"]})
+        assert r.status_code == 200, r.text
+        t = r.json()
+        assert t["kind"] == "order"
+        assert t["order_id"] == order["id"]
+        # idempotent
+        r2 = customer.post(f"{API}/chat/threads",
+                           json={"kind": "order", "order_id": order["id"]})
+        assert r2.json()["id"] == t["id"]
+
+
+# ---- Custom order balance payment (P1) ----
+class TestCustomBalancePayment:
+    def test_balance_payment_flow(self, customer, aarav, admin):
+        # customer creates a request to aarav (artist)
+        aarav_id = aarav.get(f"{API}/auth/me").json()["id"]
+        r = customer.post(f"{API}/custom-requests", json={
+            "title": "TEST_balance flow",
+            "description": "TEST desc balance flow validation for pay-balance endpoint",
+            "target_type": "artist",
+            "target_id": aarav_id,
+            "budget": 1000,
+        })
+        assert r.status_code == 200, r.text
+        cr_id = r.json()["id"]
+        # admin reviews and forwards to creator
+        r = admin.post(f"{API}/custom-requests/{cr_id}/review", json={"approve": True})
+        if r.status_code != 200:
+            pytest.skip(f"review failed: {r.status_code} {r.text}")
+        # aarav estimates (cost + deadline)
+        r = aarav.post(f"{API}/custom-requests/{cr_id}/estimate", json={
+            "cost": 1000, "deadline": "2026-12-31", "message": "TEST"})
+        if r.status_code != 200:
+            pytest.skip(f"estimate failed: {r.status_code} {r.text}")
+        # customer accepts + selects advance payment
+        r = customer.post(f"{API}/custom-requests/{cr_id}/respond",
+                          json={"accept": True, "payment_type": "advance"})
+        assert r.status_code == 200, r.text
+        cr = r.json()
+        # advance = 30% of 1000 = 300
+        _, pv = _pay(customer, 300, "custom_advance", cr_id)
+        r = customer.post(f"{API}/custom-requests/{cr_id}/pay",
+                          json={"payment_db_id": pv["id"]})
+        assert r.status_code == 200, r.text
+        # aarav starts + delivers
+        r = aarav.post(f"{API}/custom-requests/{cr_id}/start")
+        assert r.status_code == 200, r.text
+        r = aarav.post(f"{API}/custom-requests/{cr_id}/deliver",
+                       json={"note": "TEST delivered"})
+        assert r.status_code == 200, r.text
+        # complete should be blocked until balance paid
+        r = customer.post(f"{API}/custom-requests/{cr_id}/complete")
+        assert r.status_code == 400, f"complete should be blocked without balance, got {r.status_code}"
+        # customer pays balance
+        balance = 700  # 70% of 1000
+        _, pv = _pay(customer, balance, "custom_balance", cr_id)
+        r = customer.post(f"{API}/custom-requests/{cr_id}/pay-balance",
+                          json={"payment_db_id": pv["id"]})
+        assert r.status_code == 200, r.text
+        cr = r.json()
+        assert cr.get("balance_paid") is True
+        # now complete works
+        r = customer.post(f"{API}/custom-requests/{cr_id}/complete")
+        assert r.status_code == 200, r.text

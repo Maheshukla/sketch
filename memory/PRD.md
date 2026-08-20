@@ -88,7 +88,17 @@ A SaaS platform combining Instagram (reels/social), Behance (portfolios), Etsy (
 - Fixes this iteration: SupportPage missing WhatsAppButton import (crash) fixed; recently-viewed dedupe (duplicate React keys); abandoned payment_pending orders hidden; TEST_ residue reels with http:// placeholder purged from DB; test media URLs switched to https
 - Testing: iteration_6 — 79/79 backend tests pass (serial); all frontend flows verified by testing agent (support, checkout, addresses, order detail, dashboard cards, KYC modal, reels desktop/mobile, audit logs)
 
+## Iteration 7 — P0/P1/P2: Live Razorpay, balance payments, disputes, live chat, refactor (2026-08-20)
+- P0: Real Razorpay TEST keys wired (backend/.env) — checkout.js opens on cart + custom-order payments (demo gateway now inactive); POST /api/payments/webhook with HMAC signature verification (payment.captured/failed/refund.*); test suite signs payments with HMAC via _pay/_env helpers. SMS OTP left mocked per user choice.
+- P1a: Balance payments — advance-paid custom orders (30%) require 70% balance (POST /custom-requests/{id}/pay-balance, purpose custom_balance) before completion; completion blocked (400) until balance_paid; both escrows released on complete.
+- P1b: Disputes/refunds — buyer raises dispute (POST /orders/{id}/dispute, status→disputed, prev_status kept); admin Disputes tab (GET /admin/disputes, POST /admin/orders/{id}/resolve-dispute refund|reject); refund calls Razorpay refund API for real pay_* ids, marks escrow refunded; reject restores prev_status.
+- P1c: Live chat — chat_threads collection; order threads (buyer↔seller, idempotent per order) + support threads (buyer↔staff, idempotent per user); ChatPage /chat with 5s polling; entry points: order detail "Chat with seller", Support "Live chat", /chat support button; staff see all support threads.
+- P2: Shiprocket env-gated adapter (SHIPROCKET_EMAIL/PASSWORD → token; live:false without creds) + GET /api/shipping/providers.
+- P2 refactor: server.py (2722 lines) split into deps.py (shared db/helpers/models/constants) + routes/ (25 modules: auth_routes, users, orders, payments, webhooks, disputes, chat, admin, reels, products, etc.); server.py is now 81 lines of router wiring. Route paths unchanged.
+- UX fix: /orders sales cards now navigate to /orders/:id; "View details →" affordance on buyer + sales cards.
+- Testing: iteration_7 — 92/92 backend tests pass (serial; +10 new: shipping providers, chat, disputes RBAC/refund/reject, balance-payment gate); Razorpay checkout.js modal verified opening on cart pay; chat/dispute flows verified in browser.
+
 ## Backlog
-- P0: Real Razorpay + webhook verification; real SMS OTP provider
-- P1: Balance payment for advance-paid custom orders; refunds/disputes flow; live chat; reel video transcoding; saved-reels page; sales analytics aggregation pipeline
-- P2: Shiprocket API integration (live rates/labels); internal delivery network; instant delivery; i18n; mobile apps; AI artwork tools (explicitly out of MVP scope)
+- P0: Real SMS OTP provider (Twilio/MSG91 — user deferred); switch Razorpay to LIVE keys when ready
+- P1: Reel video transcoding; saved-reels page polish; sales analytics aggregation pipeline; webhook-driven order status sync (payment.captured → auto-place order without frontend callback)
+- P2: Shiprocket live creds (activates real rates/labels via existing adapter); internal delivery network; instant delivery; i18n; mobile apps; AI artwork tools (explicitly out of MVP scope)

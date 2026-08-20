@@ -28,6 +28,8 @@ export default function AdminPage() {
   const [kycNote, setKycNote] = useState({});
   const [kycDetail, setKycDetail] = useState(null);
   const [allOrders, setAllOrders] = useState([]);
+  const [disputes, setDisputes] = useState([]);
+  const [disputeNote, setDisputeNote] = useState({});
   const [payments, setPayments] = useState([]);
   const [reportDetail, setReportDetail] = useState(null);
   const [reportNote, setReportNote] = useState("");
@@ -59,6 +61,7 @@ export default function AdminPage() {
     api.get("/admin/companies").then((r) => setCompanies(r.data)).catch(() => {});
     loadVerifs();
     api.get("/admin/orders").then((r) => setAllOrders(r.data)).catch(() => {});
+    api.get("/admin/disputes").then((r) => setDisputes(r.data)).catch(() => {});
     api.get("/admin/payments").then((r) => setPayments(r.data)).catch(() => {});
   }, []);
 
@@ -80,7 +83,7 @@ export default function AdminPage() {
 
       <Tabs defaultValue="overview">
         <TabsList className="rounded-none mb-8 flex-wrap h-auto">
-          {["overview", "users", "retailers", "companies", "kyc", "moderation", "reports", "orders", "shipping", "payments", "tickets", "enquiries", "categories"].map((t) => (
+          {["overview", "users", "retailers", "companies", "kyc", "moderation", "reports", "orders", "disputes", "shipping", "payments", "tickets", "enquiries", "categories"].map((t) => (
             <TabsTrigger key={t} value={t} data-testid={`admin-tab-${t}`} className="rounded-none font-meta text-[10px]">{t}</TabsTrigger>
           ))}
         </TabsList>
@@ -404,6 +407,39 @@ export default function AdminPage() {
             ))}
             {!allOrders.length && <p className="px-5 py-8 text-sm text-muted-foreground">No orders yet.</p>}
           </div>
+        </TabsContent>
+
+        <TabsContent value="disputes">
+          {!disputes.length ? (
+            <EmptyState testid="disputes-empty" title="No open disputes" hint="Buyer disputes on escrow orders appear here for review." />
+          ) : (
+            <div className="space-y-4" data-testid="disputes-list">
+              {disputes.map((o) => (
+                <div key={o.id} className="border border-border/60 p-5" data-testid={`dispute-row-${o.id}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="font-display font-bold">Order #{o.id.slice(-8)} <span className="font-meta text-[9px] text-muted-foreground ml-2">{o.buyer_name}</span></p>
+                      <p className="text-xs text-muted-foreground mt-1">{o.items.map((i) => i.title).join(", ")} · {inr(o.total)} · was: {o.prev_status}</p>
+                    </div>
+                    <StatusBadge status={o.status} />
+                  </div>
+                  <p className="text-sm mt-3 border-l-2 border-primary pl-3" data-testid={`dispute-reason-${o.id}`}>{o.dispute?.reason}</p>
+                  {["super_admin", "admin"].includes(user.role) && (
+                    <div className="flex flex-wrap gap-2 mt-4">
+                      <Input data-testid={`dispute-note-${o.id}`} placeholder="Resolution note (optional)" className="rounded-none w-64"
+                        value={disputeNote[o.id] || ""} onChange={(e) => setDisputeNote({ ...disputeNote, [o.id]: e.target.value })} />
+                      <Button size="sm" data-testid={`dispute-refund-${o.id}`} className="rounded-none font-meta text-[9px]"
+                        onClick={act(() => api.post(`/admin/orders/${o.id}/resolve-dispute`, { action: "refund", note: disputeNote[o.id] || "" }), "Refund initiated",
+                          () => api.get("/admin/disputes").then((r) => setDisputes(r.data)))}>Refund buyer</Button>
+                      <Button size="sm" variant="outline" data-testid={`dispute-reject-${o.id}`} className="rounded-none font-meta text-[9px]"
+                        onClick={act(() => api.post(`/admin/orders/${o.id}/resolve-dispute`, { action: "reject", note: disputeNote[o.id] || "" }), "Dispute closed — order restored",
+                          () => api.get("/admin/disputes").then((r) => setDisputes(r.data)))}>Reject dispute</Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="shipping">

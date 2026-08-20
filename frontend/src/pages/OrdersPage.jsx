@@ -64,12 +64,15 @@ export default function OrdersPage() {
               {orders.map((o) => (
                 <div key={o.id} className="card-lift border border-border/60 p-5 cursor-pointer" data-testid={`order-${o.id}`}
                   onClick={() => navigate(`/orders/${o.id}`)}>
-                  <div className="flex flex-wrap items-center gap-3 justify-between">
+                    <div className="flex flex-wrap items-center gap-3 justify-between">
                     <div>
                       <p className="font-meta text-[9px] text-muted-foreground">Order #{o.id.slice(-8)} · {new Date(o.created_at).toLocaleDateString()}</p>
                       <p className="font-display font-bold mt-1">{inr(o.total)}</p>
                     </div>
-                    <StatusBadge status={o.status} />
+                    <div className="flex items-center gap-3">
+                      <StatusBadge status={o.status} />
+                      <span data-testid={`order-view-${o.id}`} className="font-meta text-[9px] text-primary">View details →</span>
+                    </div>
                   </div>
                   {o.status !== "cancelled" && (
                     <div className="flex gap-1.5 mt-4" data-testid={`order-steps-${o.id}`}>
@@ -120,13 +123,17 @@ export default function OrdersPage() {
             ) : (
               <div className="space-y-4">
                 {sales.map((o) => (
-                  <div key={o.id} className="card-lift border border-border/60 p-5" data-testid={`sale-${o.id}`}>
+                  <div key={o.id} className="card-lift border border-border/60 p-5 cursor-pointer" data-testid={`sale-${o.id}`}
+                    onClick={() => navigate(`/orders/${o.id}`)}>
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <p className="font-display font-bold">{o.buyer_name}</p>
                         <p className="font-meta text-[9px] text-muted-foreground mt-1">{new Date(o.created_at).toLocaleDateString()}</p>
                       </div>
-                      <StatusBadge status={o.status} />
+                      <div className="flex items-center gap-3">
+                        <StatusBadge status={o.status} />
+                        <span data-testid={`sale-view-${o.id}`} className="font-meta text-[9px] text-primary">View details →</span>
+                      </div>
                     </div>
                     <div className="mt-3 space-y-1.5">
                       {o.items.map((it, i) => (

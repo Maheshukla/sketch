@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { MessageSquare } from "lucide-react";
 import api, { fmtErr } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,9 +21,19 @@ const FAQS = [
 ];
 
 export default function SupportPage() {
+  const navigate = useNavigate();
   const [tickets, setTickets] = useState([]);
   const [form, setForm] = useState({ subject: "", category: "general", message: "" });
   const [reply, setReply] = useState({});
+
+  const openLiveChat = async () => {
+    try {
+      const { data } = await api.post("/chat/threads", { kind: "support" });
+      navigate(`/chat?thread=${data.id}`);
+    } catch (e) {
+      toast.error(fmtErr(e));
+    }
+  };
 
   const load = () => api.get("/tickets").then((r) => setTickets(r.data));
   useEffect(() => {
@@ -58,9 +70,14 @@ export default function SupportPage() {
       <div className="border border-border/60 p-6 mb-12 flex flex-col sm:flex-row items-start sm:items-center gap-5 justify-between" data-testid="whatsapp-support">
         <div>
           <p className="font-display font-bold text-lg">Talk to a human</p>
-          <p className="text-sm text-muted-foreground mt-1">Order, payment, account or seller issues — chat with Sketch Support on WhatsApp.</p>
+          <p className="text-sm text-muted-foreground mt-1">Order, payment, account or seller issues — chat with Sketch Support on WhatsApp or in-app live chat.</p>
         </div>
-        <WhatsAppButton testid="whatsapp-support-btn" />
+        <div className="flex flex-wrap gap-2">
+          <Button data-testid="live-chat-btn" variant="outline" onClick={openLiveChat} className="rounded-none font-meta text-[10px] h-10">
+            <MessageSquare className="h-4 w-4 mr-2" /> Live chat
+          </Button>
+          <WhatsAppButton testid="whatsapp-support-btn" />
+        </div>
       </div>
 
       <h2 className="font-display text-2xl font-black tracking-tight mb-4">FAQs</h2>
