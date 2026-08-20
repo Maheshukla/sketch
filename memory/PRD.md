@@ -98,6 +98,14 @@ A SaaS platform combining Instagram (reels/social), Behance (portfolios), Etsy (
 - UX fix: /orders sales cards now navigate to /orders/:id; "View details →" affordance on buyer + sales cards.
 - Testing: iteration_7 — 92/92 backend tests pass (serial; +10 new: shipping providers, chat, disputes RBAC/refund/reject, balance-payment gate); Razorpay checkout.js modal verified opening on cart pay; chat/dispute flows verified in browser.
 
+## Iteration 8 — Final polish: content validation + empty states (2026-08-20)
+- Reels: MP4-only enforced at creation (media_type must be video + .mp4 URL; image/webm rejected 400). Legacy seeded image reels still render (feed image fallback kept). Studio reel uploader restricted to video/mp4 + hint text.
+- Products: creation rejected (400) without ≥1 valid image (KYC 403 still takes precedence); Studio product form blocks submit without image client-side.
+- Profiles: publishing gate — creators must have a profile photo (require_avatar in deps.py) before creating reels/products/portfolio; Studio shows an amber "add a profile photo" notice when missing.
+- Portfolio: backend now also requires ≥1 image (was client-side only).
+- Empty states: Hero renders a branded static fallback with 0 banners (was infinite shimmer); Reels page gets a styled reels-empty state; marketplace/discover/profile empties already in place.
+- Tests: 3 reel payloads + 2 product payloads updated to comply (suite kept green); new TestContentValidation class (reel MP4 rule, product image rule, profile-photo gate incl. happy path). 95/95 pass serial; ruff clean.
+
 ## Backlog
 - P0: Real SMS OTP provider (Twilio/MSG91 — user deferred); switch Razorpay to LIVE keys when ready
 - P1: Reel video transcoding; saved-reels page polish; sales analytics aggregation pipeline; webhook-driven order status sync (payment.captured → auto-place order without frontend callback)

@@ -1,13 +1,29 @@
-from fastapi import APIRouter
 
-from deps import *
-from deps import _razorpay  # noqa: F401
+
+from deps import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    PortfolioIn,
+    _razorpay,  # noqa: F401
+    current_user,
+    datetime,
+    db,
+    oid,
+    pub,
+    require,
+    require_avatar,
+    timezone,
+)
 
 router = APIRouter()
 
 
 @router.post("/portfolio")
 async def create_portfolio(data: PortfolioIn, user=Depends(require("artist", "company_owner", "company_admin", "company_artist", "retailer"))):
+    require_avatar(user)
+    if not [i for i in (data.images or []) if isinstance(i, str) and i.strip()]:
+        raise HTTPException(400, "At least one image is required for a portfolio piece")
     doc = {**data.model_dump(), "user_id": oid(user["id"]), "created_at": datetime.now(timezone.utc)}
     res = await db.portfolio.insert_one(doc)
     return pub(await db.portfolio.find_one({"_id": res.inserted_id}))

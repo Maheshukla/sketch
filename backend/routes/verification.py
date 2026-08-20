@@ -1,7 +1,22 @@
-from fastapi import APIRouter
 
-from deps import *
-from deps import _razorpay  # noqa: F401
+
+from deps import (
+    ADMIN_ROLES,
+    KYC_FIELDS,
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    _razorpay,  # noqa: F401
+    company_role,
+    current_user,
+    datetime,
+    db,
+    notify,
+    public_verification,
+    timezone,
+    uuid,
+)
 
 router = APIRouter()
 

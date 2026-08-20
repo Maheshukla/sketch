@@ -71,7 +71,7 @@ export default function StudioPage() {
       ? !verifs.some((v) => v.subject_type === "company" && v.status === "approved")
       : false;
   const [myProducts, setMyProducts] = useState([]);
-  const [reel, setReel] = useState({ caption: "", media_url: "", media_type: "image", product_id: "" });
+  const [reel, setReel] = useState({ caption: "", media_url: "", media_type: "video", product_id: "" });
   const [product, setProduct] = useState({ title: "", description: "", category: "Painting", subcategory: "Watercolor", price: "", stock: 1, product_type: "physical", images: [] });
   const [portfolio, setPortfolio] = useState({ title: "", description: "", category: "Painting", images: [] });
 
@@ -91,10 +91,11 @@ export default function StudioPage() {
 
   const submitReel = async () => {
     if (!reel.media_url || !reel.caption) return toast.error("Add media and a caption");
+    if (!reel.media_url.split("?")[0].toLowerCase().endsWith(".mp4")) return toast.error("Reels must be MP4 videos");
     try {
       await api.post("/reels", { ...reel, product_id: reel.product_id || "" });
       toast.success("Reel submitted for moderation");
-      setReel({ caption: "", media_url: "", media_type: "image", product_id: "" });
+      setReel({ caption: "", media_url: "", media_type: "video", product_id: "" });
     } catch (e) {
       toast.error(fmtErr(e));
     }
@@ -102,6 +103,7 @@ export default function StudioPage() {
 
   const submitProduct = async () => {
     if (!product.title || !product.price) return toast.error("Title and price are required");
+    if (!product.images.length) return toast.error("Add at least one product image");
     try {
       await api.post("/products", { ...product, price: parseFloat(product.price), stock: parseInt(product.stock) || 1 });
       toast.success("Product submitted for moderation");
@@ -132,6 +134,11 @@ export default function StudioPage() {
     <div className="max-w-[1200px] mx-auto px-4 sm:px-8 py-12" data-testid="studio-page">
       <PageHeader kicker="Creator Studio" title="Publish & manage."
         sub="Upload reels, list products and curate your portfolio. New content is reviewed by moderators before going live." />
+      {!user?.avatar && (
+        <div className="border border-amber-400/50 bg-amber-400/10 px-4 py-3 mb-8 text-xs text-amber-600 dark:text-amber-200" data-testid="avatar-required-notice">
+          Add a profile photo in Settings before publishing — every public profile needs a profile image.
+        </div>
+      )}
 
       {needsKyc && (
         <div className="border border-amber-400/50 bg-amber-400/5 p-4 mb-8 flex flex-wrap items-center gap-3" data-testid="kyc-banner">
@@ -156,8 +163,9 @@ export default function StudioPage() {
         <TabsContent value="reel">
           <div className="grid lg:grid-cols-2 gap-8 max-w-4xl">
             <div className="space-y-4">
-              <FilePicker testid="reel-media-upload" accept="image/*,video/mp4,video/webm"
-                onUploaded={(url) => setReel({ ...reel, media_url: url, media_type: /\.(mp4|webm)$/i.test(url) ? "video" : "image" })} />
+              <FilePicker testid="reel-media-upload" accept="video/mp4"
+                onUploaded={(url) => setReel({ ...reel, media_url: url, media_type: "video" })} />
+              <p className="text-[11px] text-muted-foreground mt-1">MP4 video required — image-only reels are no longer supported.</p>
               <div>
                 <Label className="font-meta text-[10px]">Caption</Label>
                 <Textarea data-testid="reel-caption" className="rounded-none mt-1" value={reel.caption}

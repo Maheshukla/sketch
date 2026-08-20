@@ -188,7 +188,23 @@ function Hero({ banners }) {
     return () => clearInterval(t);
   }, [count]);
 
-  if (!count) return <div className="h-[60vh] bg-secondary animate-pulse" />;
+  if (!count) {
+    return (
+      <section className="relative h-[62vh] sm:h-[70vh] overflow-hidden bg-secondary/40 flex items-end" data-testid="hero-empty">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-8 pb-20 sm:pb-24 w-full">
+          <p className="font-meta text-[10px] sm:text-[11px] text-primary" data-testid="hero-tag">The creative marketplace</p>
+          <h1 className="font-display text-4xl sm:text-6xl lg:text-7xl font-black tracking-tighter leading-[0.95] mt-3" data-testid="hero-title">Sketch.</h1>
+          <p className="text-muted-foreground text-sm sm:text-base mt-4 max-w-lg">Discover original art, commission creators, and shop supplies — all in one place.</p>
+          <div className="flex flex-wrap gap-3 mt-8">
+            <Button data-testid="hero-cta-explore" onClick={() => navigate("/marketplace")}
+              className="rounded-none font-meta text-[11px] h-11 sm:h-12 px-6 sm:px-8">
+              <Compass className="h-4 w-4 mr-2" /> Explore artwork
+            </Button>
+          </div>
+        </div>
+      </section>
+    );
+  }
   const active = banners[slide];
 
   return (

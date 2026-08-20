@@ -1,15 +1,36 @@
-from fastapi import APIRouter
 
-from deps import *
-from deps import _razorpay  # noqa: F401
+
+from deps import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    ReelIn,
+    Request,
+    _razorpay,  # noqa: F401
+    current_user,
+    datetime,
+    db,
+    get_current_user,
+    notify,
+    oid,
+    pub,
+    random,
+    re,
+    require,
+    require_avatar,
+    timezone,
+    uuid,
+)
 
 router = APIRouter()
 
 
 @router.post("/reels")
 async def create_reel(data: ReelIn, user=Depends(require("artist", "company_owner", "company_admin", "company_artist", "retailer"))):
-    if data.media_type not in {"image", "video"}:
-        raise HTTPException(400, "media_type must be image or video")
+    require_avatar(user)
+    url_path = data.media_url.split("?")[0].lower()
+    if data.media_type != "video" or not url_path.endswith(".mp4"):
+        raise HTTPException(400, "Reels require a valid MP4 video — image-only reels are not supported")
     hashtags = list({t.lower() for t in re.findall(r"#(\w+)", data.caption)})
     doc = {
         "caption": data.caption, "media_url": data.media_url, "media_type": data.media_type,

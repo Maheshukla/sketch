@@ -171,8 +171,9 @@ export default function ReelsPage() {
         ))}
         <div ref={sentinelRef} className="h-4" data-testid="reels-sentinel" />
         {!reels.length && (
-          <div className="h-[calc(100vh-4rem)] flex items-center justify-center text-white/50 font-meta text-xs">
-            No reels yet
+          <div className="h-[calc(100vh-4rem)] flex flex-col items-center justify-center gap-2 text-white/50" data-testid="reels-empty">
+            <p className="font-display text-xl font-bold text-white/80">No reels yet</p>
+            <p className="font-meta text-xs">New reels from creators will appear here as they are published.</p>
           </div>
         )}
       </div>

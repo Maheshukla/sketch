@@ -1,7 +1,25 @@
-from fastapi import APIRouter
 
-from deps import *
-from deps import _razorpay  # noqa: F401
+
+from deps import (
+    ADMIN_ROLES,
+    APIRouter,
+    Depends,
+    HTTPException,
+    ProductIn,
+    Request,
+    _razorpay,  # noqa: F401
+    current_user,
+    datetime,
+    db,
+    get_current_user,
+    oid,
+    pub,
+    require,
+    require_avatar,
+    seller_verified,
+    timezone,
+    uuid,
+)
 
 router = APIRouter()
 
@@ -12,6 +30,9 @@ async def create_product(data: ProductIn, user=Depends(require("artist", "retail
         raise HTTPException(400, "Invalid product type")
     if not await seller_verified(user):
         raise HTTPException(403, "Verification required — complete KYC before listing products")
+    require_avatar(user)
+    if not [i for i in (data.images or []) if isinstance(i, str) and i.strip()]:
+        raise HTTPException(400, "At least one valid product image is required")
     seller_id = oid(user["id"])
     seller_type = "user"
     seller_name = user["name"]

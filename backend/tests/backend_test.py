@@ -336,7 +336,7 @@ class TestStudioAndModeration:
     def test_upload_product_and_approve(self, meera, admin):
         r = meera.post(f"{API}/products", json={
             "title": "TEST_widget", "description": "d", "category": "Supplies",
-            "price": 100.0, "stock": 5, "images": [], "product_type": "physical", "tags": ["test"]})
+            "price": 100.0, "stock": 5, "images": ["https://placehold.co/600x600.png"], "product_type": "physical", "tags": ["test"]})
         assert r.status_code == 200, r.text
         pid = r.json()["id"]
         assert r.json()["status"] == "pending"
@@ -346,7 +346,7 @@ class TestStudioAndModeration:
         assert r.json()["status"] == "approved"
 
     def test_upload_reel_and_approve(self, meera, admin):
-        r = meera.post(f"{API}/reels", json={"caption": "TEST_reel", "media_url": "https://placehold.co/600x800.png", "media_type": "image"})
+        r = meera.post(f"{API}/reels", json={"caption": "TEST_reel", "media_url": "https://cdn.sketch.test/media/test_reel.mp4", "media_type": "video"})
         assert r.status_code == 200
         rid = r.json()["id"]
         assert r.json()["status"] == "pending"
@@ -1037,12 +1037,52 @@ class TestRazorpayLive:
         assert v.status_code == 400
 
 
+class TestContentValidation:
+    def test_reel_requires_mp4_video(self, meera):
+        r = meera.post(f"{API}/reels", json={"caption": "TEST_img_reel",
+                                             "media_url": "https://placehold.co/600x800.png", "media_type": "image"})
+        assert r.status_code == 400
+        assert "mp4" in r.text.lower()
+        bad = meera.post(f"{API}/reels", json={"caption": "TEST_webm",
+                                               "media_url": "https://cdn.sketch.test/x.webm", "media_type": "video"})
+        assert bad.status_code == 400
+
+    def test_product_requires_image(self, meera):
+        r = meera.post(f"{API}/products", json={
+            "title": "TEST_noimg", "description": "d", "category": "Supplies",
+            "price": 10, "stock": 1, "product_type": "physical", "images": []})
+        assert r.status_code == 400
+        assert "image" in r.text.lower()
+
+    def test_publish_requires_profile_photo(self):
+        email = f"TEST_av_{uuid.uuid4().hex[:8]}@x.com"
+        assert _register(email, "TEST_NoAvatar", "artist").status_code == 200
+        artist = _login(email)
+        r = artist.post(f"{API}/reels", json={"caption": "TEST_noav",
+                                              "media_url": "https://cdn.sketch.test/x.mp4", "media_type": "video"})
+        assert r.status_code == 400
+        assert "profile photo" in r.text.lower()
+        p = artist.post(f"{API}/products", json={
+            "title": "TEST_noavp", "description": "d", "category": "Supplies",
+            "price": 10, "stock": 1, "product_type": "physical",
+            "images": ["https://placehold.co/600x600.png"]})
+        assert p.status_code == 400
+        assert "profile photo" in p.text.lower()
+        pf = artist.post(f"{API}/portfolio", json={"title": "TEST_noavpf", "images": ["https://placehold.co/600x600.png"]})
+        assert pf.status_code == 400
+        # after adding a photo, reel creation succeeds
+        assert artist.put(f"{API}/users/me", json={"avatar": "https://placehold.co/200x200.png"}).status_code == 200
+        ok = artist.post(f"{API}/reels", json={"caption": "TEST_avok",
+                                               "media_url": "https://cdn.sketch.test/x.mp4", "media_type": "video"})
+        assert ok.status_code == 200, ok.text
+
+
 class TestReelsHashtagAndPagination:
     def test_hashtag_extraction_and_filter(self, meera, admin):
         tag = f"test{uuid.uuid4().hex[:6]}"
         r = meera.post(f"{API}/reels", json={
             "caption": f"Look at this #{tag} #art work",
-            "media_url": "https://picsum.photos/300", "media_type": "image"})
+            "media_url": "https://cdn.sketch.test/media/tag_test.mp4", "media_type": "video"})
         assert r.status_code == 200
         rid = r.json()["id"]
         assert tag in r.json().get("hashtags", [])
@@ -1262,10 +1302,13 @@ class TestRetailerKYC:
         assert rev.status_code == 200, rev.text
         assert rev.json()["status"] == "approved"
 
-        # 8) retailer can now create product
+        # 8) retailer sets profile photo, then can create product (image required)
+        av = retailer.put(f"{API}/users/me", json={"avatar": "https://placehold.co/200x200.png"})
+        assert av.status_code == 200, av.text
         pr3 = retailer.post(f"{API}/products", json={
             "title": "TEST_kyc_ok", "description": "d", "category": "Supplies",
-            "price": 100, "stock": 5, "product_type": "physical"})
+            "price": 100, "stock": 5, "product_type": "physical",
+            "images": ["https://placehold.co/600x600.png"]})
         assert pr3.status_code == 200, pr3.text
         assert pr3.json()["title"] == "TEST_kyc_ok"
 
@@ -1278,7 +1321,8 @@ class TestRetailerKYC:
         supplies = _sess(*CREDS["supplies"])
         r = supplies.post(f"{API}/products", json={
             "title": f"TEST_pre_{uuid.uuid4().hex[:6]}", "description": "d",
-            "category": "Supplies", "price": 50, "stock": 3, "product_type": "physical"})
+            "category": "Supplies", "price": 50, "stock": 3, "product_type": "physical",
+            "images": ["https://placehold.co/600x600.png"]})
         assert r.status_code == 200, r.text
 
 
@@ -1389,7 +1433,7 @@ class TestReportDetailAction:
     def test_report_detail_and_warn(self, customer, admin, meera):
         # meera creates a reel, admin approves
         r = meera.post(f"{API}/reels", json={
-            "caption": "TEST_rep_reel", "media_url": "https://placehold.co/600x800.png", "media_type": "image"})
+            "caption": "TEST_rep_reel", "media_url": "https://cdn.sketch.test/media/rep_reel.mp4", "media_type": "video"})
         assert r.status_code == 200
         reel_id = r.json()["id"]
         admin.post(f"{API}/admin/reels/{reel_id}/approve")

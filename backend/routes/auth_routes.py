@@ -1,7 +1,35 @@
-from fastapi import APIRouter
 
-from deps import *
-from deps import _razorpay  # noqa: F401
+
+from deps import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    LoginIn,
+    ObjectId,
+    OtpRequestIn,
+    OtpVerifyIn,
+    RegisterIn,
+    Request,
+    Response,
+    _razorpay,  # noqa: F401
+    create_access_token,
+    current_user,
+    datetime,
+    db,
+    hash_password,
+    logger,
+    new_otp,
+    oid,
+    os,
+    public_user,
+    pyjwt,
+    re,
+    requests,
+    set_auth_cookies,
+    timedelta,
+    timezone,
+    verify_password,
+)
 
 router = APIRouter()
 

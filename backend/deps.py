@@ -472,6 +472,7 @@ __all__ = [
     "release_escrow",
     "requests",
     "require",
+    "require_avatar",
     "secrets",
     "seed",
     "seller_verified",
@@ -484,3 +485,8 @@ __all__ = [
     "validate_address",
     "verify_password",
 ]
+
+
+def require_avatar(user):
+    if not user.get("avatar"):
+        raise HTTPException(400, "Add a profile photo before publishing — every public profile needs a profile image")

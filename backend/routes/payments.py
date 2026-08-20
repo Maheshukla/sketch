@@ -1,7 +1,22 @@
-from fastapi import APIRouter
 
-from deps import *
-from deps import _razorpay
+
+from deps import (
+    RAZORPAY_KEY_ID,
+    RAZORPAY_KEY_SECRET,
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    _razorpay,
+    audit,
+    current_user,
+    datetime,
+    db,
+    oid,
+    pub,
+    timezone,
+    uuid,
+)
 
 router = APIRouter()
 

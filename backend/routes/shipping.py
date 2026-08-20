@@ -1,7 +1,13 @@
-from fastapi import APIRouter
 
-from deps import *
-from deps import _razorpay  # noqa: F401
+
+from deps import (
+    COURIER_RATES,
+    COURIERS,
+    SHIPPING_FLAT,
+    APIRouter,
+    _razorpay,  # noqa: F401
+    shiprocket_token,
+)
 
 router = APIRouter()
 

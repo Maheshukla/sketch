@@ -1,7 +1,13 @@
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
-from deps import *
+from deps import (
+    client,
+    db,
+    init_storage,
+    logger,
+    os,
+)
 from seed import seed
 
 app = FastAPI(title="Sketch API")
