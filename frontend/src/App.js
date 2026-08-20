@@ -26,6 +26,7 @@ import SavedPage from "@/pages/SavedPage";
 import EnquiryPage from "@/pages/EnquiryPage";
 import VerificationPage from "@/pages/VerificationPage";
 import StaticPage from "@/pages/StaticPage";
+import OrderDetailPage from "@/pages/OrderDetailPage";
 
 const ThemeContext = createContext(null);
 export const useTheme = () => useContext(ThemeContext);
@@ -87,6 +88,7 @@ export default function App() {
               <Route path="/cart" element={<RequireAuth><CartPage /></RequireAuth>} />
               <Route path="/wishlist" element={<RequireAuth><WishlistPage /></RequireAuth>} />
               <Route path="/orders" element={<RequireAuth><OrdersPage /></RequireAuth>} />
+              <Route path="/orders/:id" element={<RequireAuth><OrderDetailPage /></RequireAuth>} />
               <Route path="/custom-orders" element={<RequireAuth><CustomOrdersPage /></RequireAuth>} />
               <Route path="/dashboard" element={<RequireAuth><DashboardPage /></RequireAuth>} />
               <Route path="/studio" element={<RequireAuth roles={["artist", "retailer", "company_owner", "company_admin", "company_artist"]}><StudioPage /></RequireAuth>} />

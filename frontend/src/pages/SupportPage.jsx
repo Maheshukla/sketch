@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { PageHeader, EmptyState, StatusBadge } from "@/components/cards";
+import { PageHeader, EmptyState, StatusBadge, WhatsAppButton } from "@/components/cards";
 
 const FAQS = [
   ["How does escrow work?", "Your payment is held securely by Sketch and only released to the creator after you confirm delivery of the order or final artwork."],
@@ -54,6 +54,14 @@ export default function SupportPage() {
   return (
     <div className="max-w-[900px] mx-auto px-4 sm:px-8 py-12" data-testid="support-page">
       <PageHeader kicker="Support" title="How can we help?" />
+
+      <div className="border border-border/60 p-6 mb-12 flex flex-col sm:flex-row items-start sm:items-center gap-5 justify-between" data-testid="whatsapp-support">
+        <div>
+          <p className="font-display font-bold text-lg">Talk to a human</p>
+          <p className="text-sm text-muted-foreground mt-1">Order, payment, account or seller issues — chat with Sketch Support on WhatsApp.</p>
+        </div>
+        <WhatsAppButton testid="whatsapp-support-btn" />
+      </div>
 
       <h2 className="font-display text-2xl font-black tracking-tight mb-4">FAQs</h2>
       <Accordion type="single" collapsible className="mb-12" data-testid="faq-list">

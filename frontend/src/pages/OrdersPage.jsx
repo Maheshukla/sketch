@@ -1,19 +1,21 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Truck, Check, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import api, { fmtErr, inr, fileUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PageHeader, EmptyState, StatusBadge } from "@/components/cards";
+import { PageHeader, EmptyState, StatusBadge, WhatsAppButton } from "@/components/cards";
 
 const SELLER_ROLES = ["artist", "retailer", "company_owner", "company_admin", "company_artist"];
-const STEPS = ["placed", "accepted", "processing", "shipped", "delivered", "completed"];
+const STEPS = ["placed", "accepted", "processing", "shipped", "out_for_delivery", "delivered", "completed"];
 
 export default function OrdersPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [orders, setOrders] = useState([]);
   const [sales, setSales] = useState([]);
   const [couriers, setCouriers] = useState([]);
@@ -60,10 +62,11 @@ export default function OrdersPage() {
           ) : (
             <div className="space-y-4">
               {orders.map((o) => (
-                <div key={o.id} className="card-lift border border-border/60 p-5" data-testid={`order-${o.id}`}>
+                <div key={o.id} className="card-lift border border-border/60 p-5 cursor-pointer" data-testid={`order-${o.id}`}
+                  onClick={() => navigate(`/orders/${o.id}`)}>
                   <div className="flex flex-wrap items-center gap-3 justify-between">
                     <div>
-                      <p className="font-meta text-[9px] text-muted-foreground">Order · {new Date(o.created_at).toLocaleDateString()}</p>
+                      <p className="font-meta text-[9px] text-muted-foreground">Order #{o.id.slice(-8)} · {new Date(o.created_at).toLocaleDateString()}</p>
                       <p className="font-display font-bold mt-1">{inr(o.total)}</p>
                     </div>
                     <StatusBadge status={o.status} />
@@ -89,8 +92,12 @@ export default function OrdersPage() {
                       <Truck className="h-3.5 w-3.5" /> {o.courier} {o.tracking_id && `· ${o.tracking_id}`}
                     </p>
                   )}
-                  <div className="flex gap-2 mt-4">
+                  <div className="flex flex-wrap gap-2 mt-4 items-center" onClick={(e) => e.stopPropagation()}>
                     {o.status === "shipped" && (
+                      <Button data-testid={`confirm-delivery-${o.id}`} onClick={() => setStatus(o.id, "delivered")}
+                        className="rounded-none font-meta text-[10px]">Confirm delivery</Button>
+                    )}
+                    {o.status === "out_for_delivery" && (
                       <Button data-testid={`confirm-delivery-${o.id}`} onClick={() => setStatus(o.id, "delivered")}
                         className="rounded-none font-meta text-[10px]">Confirm delivery</Button>
                     )}
@@ -98,6 +105,7 @@ export default function OrdersPage() {
                       <Button data-testid={`complete-order-${o.id}`} onClick={() => setStatus(o.id, "completed")} variant="outline"
                         className="rounded-none font-meta text-[10px]">Mark completed</Button>
                     )}
+                    <WhatsAppButton reference={`order #${o.id.slice(-8)}`} testid={`order-help-${o.id}`} />
                   </div>
                 </div>
               ))}
@@ -147,8 +155,7 @@ export default function OrdersPage() {
                     )}
 
                     {["accepted", "processing"].includes(o.status) && (
-                      <div className="flex flex-wrap gap-2 mt-4">
-                        <Select value={ship[o.id]?.courier || ""} onValueChange={(v) => setShip({ ...ship, [o.id]: { ...ship[o.id], courier: v } })}>
+                      <div className="flex flex-wrap gap-2 mt-4">                        <Select value={ship[o.id]?.courier || ""} onValueChange={(v) => setShip({ ...ship, [o.id]: { ...ship[o.id], courier: v } })}>
                           <SelectTrigger data-testid={`ship-courier-${o.id}`} className="rounded-none w-48">
                             <SelectValue placeholder="Courier partner" />
                           </SelectTrigger>
@@ -164,7 +171,15 @@ export default function OrdersPage() {
                         <Button data-testid={`ship-btn-${o.id}`} onClick={() => doShip(o.id)} className="rounded-none font-meta text-[10px]">Mark shipped</Button>
                       </div>
                     )}
-                    {o.courier && ["shipped", "delivered", "completed"].includes(o.status) && (
+                    {o.status === "shipped" && (
+                      <div className="flex flex-wrap gap-2 mt-4">
+                        <Button data-testid={`pickedup-btn-${o.id}`} onClick={() => setStatus(o.id, "picked_up")} variant="outline"
+                          className="rounded-none font-meta text-[10px]">Courier picked up</Button>
+                        <Button data-testid={`ofd-btn-${o.id}`} onClick={() => setStatus(o.id, "out_for_delivery")} variant="outline"
+                          className="rounded-none font-meta text-[10px]">Out for delivery</Button>
+                      </div>
+                    )}
+                    {o.courier && ["shipped", "out_for_delivery", "delivered", "completed"].includes(o.status) && (
                       <p className="text-xs text-muted-foreground mt-3">Shipped via {o.courier} {o.tracking_id && `· ${o.tracking_id}`}</p>
                     )}
                   </div>

@@ -1,4 +1,4 @@
-import { Heart, ShoppingBag, Star, Zap, Sparkles, Flag } from "lucide-react";
+import { Heart, MessageCircle, ShoppingBag, Star, Zap, Sparkles, Flag } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -140,13 +140,34 @@ export function ProductCard({ product, onChange }) {
   );
 }
 
-export function StatCard({ label, value, sub, testid }) {
+export function StatCard({ label, value, sub, testid, onClick }) {
+  const interactive = !!onClick;
   return (
-    <div className="border border-border/60 bg-card p-5" data-testid={testid}>
+    <div
+      className={`border border-border/60 bg-card p-5 ${interactive ? "cursor-pointer hover:border-foreground/50 hover:bg-secondary/40 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-primary" : ""}`}
+      data-testid={testid}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={interactive ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
+    >
       <p className="font-meta text-[10px] text-muted-foreground">{label}</p>
       <p className="font-display text-3xl font-black tracking-tight mt-2">{value}</p>
       {sub && <p className="text-xs text-muted-foreground mt-1">{sub}</p>}
+      {interactive && <p className="font-meta text-[8px] text-primary mt-2 opacity-0 group-hover:opacity-100">Open →</p>}
     </div>
+  );
+}
+
+export function WhatsAppButton({ reference, label = "Chat on WhatsApp", testid = "whatsapp-btn" }) {
+  const msg = encodeURIComponent(
+    reference ? `Hello Sketch Support, I need help with ${reference}.` : "Hello Sketch Support, I need help with my account/order."
+  );
+  return (
+    <a data-testid={testid} href={`https://wa.me/918004513580?text=${msg}`} target="_blank" rel="noreferrer"
+      className="inline-flex items-center gap-2 border border-emerald-500/50 text-emerald-500 px-4 h-10 font-meta text-[10px] hover:bg-emerald-500 hover:text-white transition-colors">
+      <MessageCircle className="h-4 w-4" /> {label}
+    </a>
   );
 }
 

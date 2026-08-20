@@ -86,6 +86,14 @@ async def notify(user_id, ntype: str, message: str, link: str = ""):
     })
 
 
+async def audit(actor: dict, action: str, target: str, meta: dict = None):
+    await db.audit_logs.insert_one({
+        "actor_id": oid(actor["id"]), "actor_name": actor["name"], "actor_role": actor["role"],
+        "action": action, "target": str(target), "meta": meta or {},
+        "at": datetime.now(timezone.utc),
+    })
+
+
 def fee_breakdown(subtotal: float, has_physical: bool) -> dict:
     tax = round(subtotal * TAX_RATE, 2)
     shipping = SHIPPING_FLAT if has_physical else 0.0
@@ -190,8 +198,13 @@ async def me(user=Depends(current_user)):
     wl = await db.wishlists.find_one({"user_id": uid})
     wl_count = len(wl.get("product_ids", [])) if wl else 0
     msg_count = await db.notifications.count_documents({"user_id": uid, "read": False, "type": "message"})
+    orders_active = await db.orders.count_documents(
+        {"buyer_id": uid, "status": {"$in": ["placed", "accepted", "processing", "shipped", "out_for_delivery"]}})
+    custom_pending = await db.custom_requests.count_documents(
+        {"customer_id": uid, "status": {"$nin": ["completed", "declined", "rejected"]}})
     return {**user, "unread_notifications": unread, "cart_count": cart_count,
-            "wishlist_count": wl_count, "message_count": msg_count}
+            "wishlist_count": wl_count, "message_count": msg_count,
+            "orders_active": orders_active, "custom_pending": custom_pending}
 
 
 @api_router.post("/auth/refresh")
@@ -302,7 +315,7 @@ async def upload(file: UploadFile = File(...), user=Depends(current_user)):
     data = await file.read()
     if len(data) > 200 * 1024 * 1024:
         raise HTTPException(400, "File too large (max 200MB)")
-    allowed_mime = {"image/jpeg", "image/png", "image/webp", "image/gif", "video/mp4"}
+    allowed_mime = {"image/jpeg", "image/png", "image/webp", "image/gif", "video/mp4", "video/webm"}
     if (file.content_type or content_type) not in allowed_mime:
         raise HTTPException(400, "Only JPG, PNG, WEBP, GIF and MP4 files are allowed")
     result = put_object(path, data, file.content_type or content_type)
@@ -469,6 +482,35 @@ async def remove_follower(follower_id: str, user=Depends(current_user)):
 
 # ---------------- Addresses ----------------
 
+ADDRESS_REQUIRED = ["full_name", "mobile", "house", "area", "city", "state", "pin"]
+
+
+def validate_address(body: dict, partial: bool = False) -> dict:
+    errors = []
+    if not partial:
+        for f in ADDRESS_REQUIRED:
+            if not str(body.get(f, "")).strip():
+                errors.append(f"{f.replace('_', ' ')} is required")
+    if "mobile" in body:
+        m = re.sub(r"^\+91", "", str(body.get("mobile", "")).replace(" ", ""))
+        if not re.fullmatch(r"[6-9]\d{9}", m):
+            errors.append("Valid 10-digit Indian mobile number required")
+        body["mobile"] = m
+    if "pin" in body and not re.fullmatch(r"\d{6}", str(body.get("pin", ""))):
+        errors.append("6-digit PIN code required")
+    if "label" in body and body["label"] not in {"Home", "Work", "Other"}:
+        errors.append("Label must be Home, Work or Other")
+    if errors:
+        raise HTTPException(400, "; ".join(errors))
+    return body
+
+
+def format_address(a: dict) -> str:
+    if "house" in a:
+        return f"{a.get('full_name', '')}, {a.get('house', '')}, {a.get('area', '')}, {a.get('city', '')}, {a.get('state', '')} — {a.get('pin', '')}"
+    return f"{a.get('label', '')}: {a.get('line', '')}, {a.get('city', '')} — {a.get('pin', '')}"
+
+
 @api_router.get("/users/me/addresses")
 async def list_addresses(user=Depends(current_user)):
     doc = await db.users.find_one({"_id": oid(user["id"])})
@@ -477,12 +519,13 @@ async def list_addresses(user=Depends(current_user)):
 
 @api_router.post("/users/me/addresses")
 async def add_address(request: Request, user=Depends(current_user)):
-    body = await request.json()
-    if not body.get("line") or not body.get("city") or not body.get("pin"):
-        raise HTTPException(400, "Address line, city and PIN are required")
-    addr = {"id": uuid.uuid4().hex[:10], "label": body.get("label", "Home"),
-            "line": body["line"], "city": body["city"], "pin": body["pin"],
-            "phone": body.get("phone", ""), "is_default": False}
+    body = validate_address(await request.json())
+    addr = {k: str(body.get(k, "")).strip() for k in
+            ["label", "full_name", "mobile", "house", "area", "landmark", "city", "state", "pin", "country"]}
+    addr["label"] = addr["label"] or "Home"
+    addr["country"] = addr["country"] or "India"
+    addr["id"] = uuid.uuid4().hex[:10]
+    addr["is_default"] = False
     existing = await db.users.find_one({"_id": oid(user["id"])})
     if not (existing or {}).get("addresses"):
         addr["is_default"] = True
@@ -492,8 +535,9 @@ async def add_address(request: Request, user=Depends(current_user)):
 
 @api_router.put("/users/me/addresses/{addr_id}")
 async def edit_address(addr_id: str, request: Request, user=Depends(current_user)):
-    body = await request.json()
-    update = {f"addresses.$.{k}": v for k, v in body.items() if k in {"label", "line", "city", "pin", "phone"}}
+    body = validate_address(await request.json(), partial=True)
+    update = {f"addresses.$.{k}": str(v).strip() for k, v in body.items()
+              if k in {"label", "full_name", "mobile", "house", "area", "landmark", "city", "state", "pin", "country"}}
     if not update:
         raise HTTPException(400, "At least one address field is required")
     res = await db.users.update_one({"_id": oid(user["id"]), "addresses.id": addr_id}, {"$set": update})
@@ -670,7 +714,8 @@ async def remove_member(company_id: str, member_id: str, user=Depends(current_us
 # ---------------- Verification / KYC ----------------
 
 KYC_FIELDS = {"business_name", "business_type", "gstin", "msme", "pan", "govt_id_type",
-              "govt_id", "address", "contact_name", "contact_phone", "account_number", "ifsc"}
+              "govt_id", "address", "contact_name", "contact_phone", "account_number", "ifsc",
+              "owner_name"}
 KYC_STATUSES = {"draft", "submitted", "under_review", "approved", "rejected", "more_info", "suspended"}
 
 
@@ -724,14 +769,23 @@ async def submit_verification(request: Request, user=Depends(current_user)):
     if action == "submit" and not any(data.get(k) for k in ("gstin", "msme", "pan", "govt_id")):
         raise HTTPException(400, "Provide at least one identity document (GSTIN, MSME, PAN or government ID)")
     status = "submitted" if action == "submit" else "draft"
+    docs_in = [{"id": uuid.uuid4().hex[:8], "name": d.get("name", "document"), "url": d.get("url", ""),
+                "status": "pending", "note": ""}
+               for d in body.get("documents", []) if isinstance(d, dict) and d.get("url")]
     doc = {**data, "subject_id": subject_id, "subject_type": subject_type, "subject_name": subject_name,
            "status": status, "updated_at": datetime.now(timezone.utc)}
+    if docs_in:
+        doc["documents"] = docs_in
     if existing:
+        if not docs_in and existing.get("documents"):
+            doc["documents"] = existing["documents"]
         await db.verifications.update_one({"_id": existing["_id"]}, {"$set": doc})
         vid = existing["_id"]
     else:
         doc["created_at"] = datetime.now(timezone.utc)
         doc["notes"] = []
+        doc["history"] = []
+        doc.setdefault("documents", docs_in)
         res = await db.verifications.insert_one(doc)
         vid = res.inserted_id
     if action == "submit":
@@ -1007,7 +1061,11 @@ async def track_product_view(product_id: str, request: Request):
 async def get_recently_viewed(user=Depends(current_user)):
     rv = await db.recently_viewed.find_one({"user_id": oid(user["id"])})
     items = []
+    seen = set()
     for entry in reversed((rv or {}).get("items", [])):
+        if entry["product_id"] in seen:
+            continue
+        seen.add(entry["product_id"])
         prod = await db.products.find_one({"_id": entry["product_id"]})
         if prod:
             items.append(pub(prod))
@@ -1216,6 +1274,7 @@ async def verify_payment(request: Request, user=Depends(current_user)):
         # MOCKED gateway: always succeeds. Set RAZORPAY_KEY_ID/SECRET to enable live Razorpay checkout.
         payment_id = f"pay_mock_{uuid.uuid4().hex[:14]}"
     await db.payment_orders.update_one({"_id": order["_id"]}, {"$set": {"status": "paid"}})
+    await audit(user, "payment_paid", order["order_id"], {"amount": order["amount"], "purpose": order["purpose"]})
     pres = await db.payments.insert_one({
         "payment_id": payment_id, "order_id": order["order_id"], "user_id": oid(user["id"]),
         "amount": order["amount"], "purpose": order["purpose"], "ref_id": order.get("ref_id", ""),
@@ -1223,6 +1282,20 @@ async def verify_payment(request: Request, user=Depends(current_user)):
         "created_at": datetime.now(timezone.utc),
     })
     return {"payment_id": payment_id, "id": str(pres.inserted_id), "status": "held", "ref_id": order.get("ref_id", ""), "purpose": order["purpose"]}
+
+
+@api_router.post("/payments/fail")
+async def fail_payment(request: Request, user=Depends(current_user)):
+    body = await request.json()
+    order = await db.payment_orders.find_one({"order_id": body.get("order_id", ""), "status": "created"})
+    if not order:
+        raise HTTPException(400, "Payment order not found")
+    await db.payment_orders.update_one({"_id": order["_id"]},
+                                       {"$set": {"status": "failed", "failed_reason": body.get("reason", "")}})
+    if order.get("purpose") == "order" and order.get("ref_id"):
+        await db.orders.update_one({"_id": oid(order["ref_id"])},
+                                   {"$set": {"payment_status": "failed"}})
+    return {"ok": True, "status": "failed"}
 
 
 async def release_escrow(ref_id: str, purpose: str):
@@ -1240,13 +1313,15 @@ async def checkout(request: Request, user=Depends(current_user)):
     if method not in {"upi", "card", "netbanking", "wallet"}:
         raise HTTPException(400, "Invalid payment method")
     address = body.get("address", "")
+    addr_snapshot = None
     addr_id = body.get("address_id", "")
     if addr_id:
         me_doc = await db.users.find_one({"_id": oid(user["id"])})
         addr = next((a for a in (me_doc or {}).get("addresses", []) if a["id"] == addr_id), None)
         if not addr:
             raise HTTPException(400, "Address not found")
-        address = f"{addr['label']}: {addr['line']}, {addr['city']} — {addr['pin']}"
+        address = format_address(addr)
+        addr_snapshot = addr
     if not address:
         raise HTTPException(400, "Delivery address required")
     cart = await db.carts.find_one({"user_id": oid(user["id"])})
@@ -1278,7 +1353,9 @@ async def checkout(request: Request, user=Depends(current_user)):
     order = {
         "buyer_id": oid(user["id"]), "buyer_name": user["name"], "items": items,
         **fees, "payment_method": method, "status": "payment_pending",
-        "address": address, "courier": "", "tracking_id": "",
+        "payment_status": "pending",
+        "address": address, "address_snapshot": addr_snapshot or {"raw": address},
+        "courier": "", "tracking_id": "",
         "created_at": datetime.now(timezone.utc),
     }
     res = await db.orders.insert_one(order)
@@ -1299,7 +1376,7 @@ async def pay_order(order_id: str, request: Request, user=Depends(current_user))
         await db.products.update_one({"_id": it["product_id"]},
                                      {"$inc": {"stock": -it["qty"] if it["product_type"] == "physical" else 0,
                                                "sales": it["qty"]}})
-    await db.orders.update_one({"_id": order["_id"]}, {"$set": {"status": "placed", "paid_at": datetime.now(timezone.utc)}})
+    await db.orders.update_one({"_id": order["_id"]}, {"$set": {"status": "placed", "payment_status": "paid", "paid_at": datetime.now(timezone.utc)}})
     await db.carts.update_one({"user_id": oid(user["id"])}, {"$pull": {"items": {"saved": {"$ne": True}}}})
     for sid in {str(i["seller_id"]) for i in order["items"]}:
         await notify(sid, "order", f"New order received from {user['name']}", "/orders")
@@ -1308,7 +1385,7 @@ async def pay_order(order_id: str, request: Request, user=Depends(current_user))
 
 @api_router.get("/orders")
 async def my_orders(user=Depends(current_user)):
-    orders = await db.orders.find({"buyer_id": oid(user["id"])}).sort("created_at", -1).to_list(100)
+    orders = await db.orders.find({"buyer_id": oid(user["id"]), "status": {"$ne": "payment_pending"}}).sort("created_at", -1).to_list(100)
     return [pub(o) for o in orders]
 
 
@@ -1317,7 +1394,7 @@ async def seller_orders(user=Depends(current_user)):
     seller_ids = [oid(user["id"])]
     if user.get("company_id"):
         seller_ids.append(oid(user["company_id"]))
-    orders = await db.orders.find({"items.seller_id": {"$in": seller_ids}}).sort("created_at", -1).to_list(200)
+    orders = await db.orders.find({"items.seller_id": {"$in": seller_ids}, "status": {"$ne": "payment_pending"}}).sort("created_at", -1).to_list(200)
     out = []
     for o in orders:
         o["items"] = [i for i in o["items"] if i["seller_id"] in seller_ids]
@@ -1371,7 +1448,8 @@ ORDER_TRANSITIONS = {
     "processing": ("accepted", "processing", "seller"),
     "shipped": (("accepted", "processing"), "shipped", "seller"),
     "picked_up": ("shipped", "shipped", "seller"),
-    "delivered": ("shipped", "delivered", "buyer"),
+    "out_for_delivery": ("shipped", "out_for_delivery", "seller"),
+    "delivered": (("shipped", "out_for_delivery"), "delivered", "buyer"),
     "completed": ("delivered", "completed", "buyer"),
 }
 
@@ -1421,16 +1499,43 @@ async def update_order_status(order_id: str, request: Request, user=Depends(curr
     if action == "reject":
         await db.payments.update_many({"ref_id": order_id, "purpose": "order", "escrow": "held"},
                                       {"$set": {"escrow": "refunded", "refunded_at": datetime.now(timezone.utc)}})
+        update["payment_status"] = "refunded"
     if action == "delivered":
         await release_escrow(order_id, "order")
         update["shipping.delivery_status"] = "delivered"
     await db.orders.update_one({"_id": order["_id"]}, {"$set": update})
     if actor == "seller":
-        await notify(order["buyer_id"], "order", f"Order update: {to_state.replace('_', ' ')}", "/orders")
+        await notify(order["buyer_id"], "order", f"Order update: {to_state.replace('_', ' ')}", f"/orders/{order_id}")
     else:
         for sid in {str(i["seller_id"]) for i in order["items"]}:
-            await notify(sid, "order", f"Order {to_state.replace('_', ' ')} by customer", "/orders")
+            await notify(sid, "order", f"Order {to_state.replace('_', ' ')} by customer", f"/orders/{order_id}")
+    await audit(user, f"order_{action}", order_id, {"from": order["status"], "to": to_state})
     return pub(await db.orders.find_one({"_id": order["_id"]}))
+
+
+@api_router.get("/orders/{order_id}")
+async def order_detail(order_id: str, user=Depends(current_user)):
+    order = await db.orders.find_one({"_id": oid(order_id)})
+    if not order:
+        raise HTTPException(404, "Order not found")
+    seller_ids = {user["id"], user.get("company_id", "")}
+    is_buyer = str(order["buyer_id"]) == user["id"]
+    is_seller = any(str(i["seller_id"]) in seller_ids for i in order["items"])
+    if not is_buyer and not is_seller and user["role"] not in STAFF_ROLES:
+        raise HTTPException(403, "Not your order")
+    out = pub(order)
+    payment = await db.payments.find_one({"ref_id": order_id, "purpose": "order"})
+    out["payment"] = pub(payment) if payment else None
+    timeline = []
+    for field, label in [("created_at", "Order placed"), ("paid_at", "Payment confirmed"),
+                         ("accepted_at", "Accepted by seller"), ("processing_at", "Preparing"),
+                         ("shipped_at", "Shipped"), ("out_for_delivery_at", "Out for delivery"),
+                         ("delivered_at", "Delivered"), ("completed_at", "Completed"),
+                         ("cancelled_at", "Cancelled")]:
+        if order.get(field):
+            timeline.append({"label": label, "at": order[field]})
+    out["timeline"] = timeline
+    return out
 
 
 # ---------------- Collections ----------------
@@ -1944,6 +2049,7 @@ async def admin_user_status(user_id: str, request: Request, user=Depends(require
     if body.get("status") not in {"active", "suspended"}:
         raise HTTPException(400, "Invalid status")
     await db.users.update_one({"_id": oid(user_id)}, {"$set": {"status": body["status"]}})
+    await audit(user, f"user_{body['status']}", user_id, {"email": (await db.users.find_one({"_id": oid(user_id)}))["email"]})
     return public_user(await db.users.find_one({"_id": oid(user_id)}))
 
 
@@ -1955,6 +2061,11 @@ async def admin_verify_user(user_id: str, user=Depends(require(*ADMIN_ROLES))):
     new_val = not target.get("verified", False)
     await db.users.update_one({"_id": target["_id"]}, {"$set": {"verified": new_val}})
     return {"verified": new_val}
+
+
+@api_router.get("/admin/audit-logs")
+async def get_audit_logs(user=Depends(require(*ADMIN_ROLES))):
+    return [pub(a) for a in await db.audit_logs.find().sort("at", -1).to_list(300)]
 
 
 @api_router.post("/admin/users")
@@ -1990,6 +2101,7 @@ async def moderate(type: str, item_id: str, request: Request, user=Depends(requi
     coll = db.reels if type == "reels" else db.products
     status = "approved" if action == "approve" else "rejected"
     await coll.update_one({"_id": oid(item_id)}, {"$set": {"status": status}})
+    await audit(user, f"moderation_{action}", item_id, {"type": type})
     item = await coll.find_one({"_id": oid(item_id)})
     owner = item.get("creator_id") or item.get("seller_id")
     if owner:
@@ -2123,6 +2235,46 @@ async def admin_verifications(status: str = "", user=Depends(require(*STAFF_ROLE
     return [pub(d) for d in docs]
 
 
+@api_router.get("/admin/verifications/{vid}")
+async def admin_verification_detail(vid: str, user=Depends(require(*STAFF_ROLES))):
+    v = await db.verifications.find_one({"_id": oid(vid)})
+    if not v:
+        raise HTTPException(404, "Verification not found")
+    await db.kyc_access_logs.insert_one({"admin_id": oid(user["id"]), "admin_name": user["name"],
+                                         "verification_id": vid, "at": datetime.now(timezone.utc)})
+    return pub(v)
+
+
+@api_router.post("/admin/verifications/{vid}/documents/{doc_id}")
+async def review_document(vid: str, doc_id: str, request: Request, user=Depends(require(*ADMIN_ROLES))):
+    body = await request.json()
+    action = body.get("action")
+    if action not in {"verify", "invalid", "request_replacement"}:
+        raise HTTPException(400, "Invalid document action")
+    v = await db.verifications.find_one({"_id": oid(vid)})
+    if not v:
+        raise HTTPException(404, "Verification not found")
+    status_map = {"verify": "verified", "invalid": "invalid", "request_replacement": "replacement_requested"}
+    res = await db.verifications.update_one(
+        {"_id": v["_id"], "documents.id": doc_id},
+        {"$set": {"documents.$.status": status_map[action], "documents.$.note": body.get("note", ""),
+                  "documents.$.reviewed_by": user["name"]},
+         "$push": {"history": {"action": f"document_{action}", "by": user["name"], "document": doc_id,
+                               "reason": body.get("note", ""), "at": datetime.now(timezone.utc)}}})
+    if not res.matched_count:
+        raise HTTPException(404, "Document not found")
+    target_uid = v["subject_id"]
+    if v["subject_type"] == "company":
+        company = await db.companies.find_one({"_id": oid(target_uid)})
+        for m in (company["members"] if company else []):
+            if m["role"] in {"owner", "admin"}:
+                await notify(m["user_id"], "kyc", f"Document {status_map[action].replace('_', ' ')}: {body.get('note', '')}", "/verification")
+    else:
+        await notify(oid(target_uid), "kyc", f"A verification document was marked {status_map[action].replace('_', ' ')}", "/verification")
+    await audit(user, f"kyc_document_{action}", vid, {"document": doc_id})
+    return pub(await db.verifications.find_one({"_id": v["_id"]}))
+
+
 @api_router.post("/admin/verifications/{vid}/review")
 async def review_verification(vid: str, request: Request, user=Depends(require(*ADMIN_ROLES))):
     body = await request.json()
@@ -2131,14 +2283,20 @@ async def review_verification(vid: str, request: Request, user=Depends(require(*
     action = body.get("action")
     if action not in mapping:
         raise HTTPException(400, "Invalid action")
+    note = (body.get("note") or "").strip()
+    if action in {"reject", "more_info"} and not note:
+        raise HTTPException(400, "A reason/note is required for this action")
     v = await db.verifications.find_one({"_id": oid(vid)})
     if not v:
         raise HTTPException(404, "Verification not found")
     await db.verifications.update_one({"_id": v["_id"]}, {
         "$set": {"status": mapping[action], "reviewed_by": user["name"],
                  "reviewed_at": datetime.now(timezone.utc)},
-        "$push": {"notes": {"by": user["name"], "text": body.get("note", ""),
-                            "at": datetime.now(timezone.utc).isoformat()}}})
+        "$push": {"notes": {"by": user["name"], "text": note,
+                            "at": datetime.now(timezone.utc).isoformat()},
+                  "history": {"action": mapping[action], "by": user["name"], "reason": note,
+                              "at": datetime.now(timezone.utc)}}})
+    await audit(user, f"kyc_{mapping[action]}", vid, {"subject": v.get("subject_name"), "reason": note})
     if mapping[action] in {"rejected", "suspended"}:
         await db.products.update_many({"seller_id": oid(v["subject_id"])},
                                       {"$set": {"status": "suspended"}})

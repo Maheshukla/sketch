@@ -51,10 +51,12 @@ export default function ReelsPage() {
       if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
       if (e.key === "ArrowUp") {
         e.preventDefault();
+        pauseAuto();
         goTo(Math.max(currentIdx - 1, 0));
       }
       if (e.key === "ArrowDown") {
         e.preventDefault();
+        pauseAuto();
         goTo(Math.min(currentIdx + 1, reels.length - 1));
       }
     };
@@ -123,9 +125,16 @@ export default function ReelsPage() {
     return () => obs.disconnect();
   }, [exhausted, hashtag]);
 
+  const pauseAuto = () => {
+    if (autoScroll) {
+      sessionStorage.setItem("sketch-autoscroll", "0");
+      setAutoScroll(false);
+    }
+  };
+
   return (
-    <div className="relative">
-      <div className="fixed left-4 sm:left-8 bottom-6 z-40" data-testid="autoscroll-control">
+    <div className="relative" onWheel={pauseAuto} onTouchStart={pauseAuto}>
+      <div className="fixed left-4 sm:left-8 top-20 z-40" data-testid="autoscroll-control">
         <button data-testid="autoscroll-toggle" onClick={toggleAutoScroll}
           className={`font-meta text-[9px] px-3 py-2 border backdrop-blur-xl transition-colors ${autoScroll ? "border-primary text-primary bg-black/60" : "border-white/30 text-white/80 bg-black/40"}`}>
           Auto Scroll: {autoScroll ? "ON" : "OFF"}
@@ -133,7 +142,7 @@ export default function ReelsPage() {
       </div>
 
       {reels.length > 1 && (
-        <div className="fixed right-3 sm:right-6 top-20 z-40 flex flex-col gap-2" data-testid="reel-nav">
+        <div className="fixed right-3 sm:right-6 top-24 sm:top-auto sm:bottom-[500px] z-40 flex flex-col gap-2" data-testid="reel-nav">
           <button data-testid="reel-prev" onClick={() => goTo(Math.max(currentIdx - 1, 0))} disabled={currentIdx === 0}
             className="h-10 w-10 border border-white/30 bg-black/50 backdrop-blur-xl text-white flex items-center justify-center hover:bg-white hover:text-black transition-colors disabled:opacity-30">
             <ChevronUp className="h-5 w-5" />

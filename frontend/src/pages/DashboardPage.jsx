@@ -34,15 +34,15 @@ export default function DashboardPage() {
       {isSeller && (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            <StatCard testid="stat-earnings" label="Earnings (released)" value={inr(data.earnings)} sub="After 10% platform fee" />
-            <StatCard testid="stat-sales" label="Sales volume" value={inr(data.total_sales)} />
-            <StatCard testid="stat-orders" label="Orders" value={data.orders} />
-            <StatCard testid="stat-followers" label="Followers" value={data.followers} />
+            <StatCard testid="stat-earnings" label="Earnings (released)" value={inr(data.earnings)} sub="After 10% platform fee" onClick={() => navigate("/orders")} />
+            <StatCard testid="stat-sales" label="Sales volume" value={inr(data.total_sales)} onClick={() => navigate("/orders")} />
+            <StatCard testid="stat-orders" label="Orders" value={data.orders} onClick={() => navigate("/orders")} />
+            <StatCard testid="stat-followers" label="Followers" value={data.followers} onClick={() => navigate(`/profile/${user.id}`)} />
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            <StatCard testid="stat-products" label="Live products" value={data.products} />
-            <StatCard testid="stat-reels" label="Reels" value={data.reels} />
-            <StatCard testid="stat-custom" label="Custom requests" value={data.custom_requests} />
+            <StatCard testid="stat-products" label="Live products" value={data.products} onClick={() => navigate("/studio?tab=listings")} />
+            <StatCard testid="stat-reels" label="Reels" value={data.reels} onClick={() => navigate(`/profile/${user.id}?tab=reels`)} />
+            <StatCard testid="stat-custom" label="Custom requests" value={data.custom_requests} onClick={() => navigate("/custom-orders")} />
             <StatCard testid="stat-fee" label="Platform fee" value="10%" sub="Charged on released payouts" />
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
@@ -73,14 +73,14 @@ export default function DashboardPage() {
 
       {isStaff && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard testid="stat-users" label="Users" value={data.users} />
-          <StatCard testid="stat-products" label="Products" value={data.products} />
-          <StatCard testid="stat-reels" label="Reels" value={data.reels} />
-          <StatCard testid="stat-orders" label="Orders" value={data.orders} />
-          <StatCard testid="stat-revenue" label="GMV released" value={inr(data.revenue)} />
-          <StatCard testid="stat-commission" label="Commission earned" value={inr(data.commission)} />
-          <StatCard testid="stat-moderation" label="Pending moderation" value={data.pending_moderation} />
-          <StatCard testid="stat-tickets" label="Open tickets" value={data.open_tickets} />
+          <StatCard testid="stat-users" label="Users" value={data.users} onClick={() => navigate("/admin?tab=users")} />
+          <StatCard testid="stat-products" label="Products" value={data.products} onClick={() => navigate("/admin?tab=moderation")} />
+          <StatCard testid="stat-reels" label="Reels" value={data.reels} onClick={() => navigate("/admin?tab=moderation")} />
+          <StatCard testid="stat-orders" label="Orders" value={data.orders} onClick={() => navigate("/admin?tab=orders")} />
+          <StatCard testid="stat-revenue" label="GMV released" value={inr(data.revenue)} onClick={() => navigate("/admin?tab=payments")} />
+          <StatCard testid="stat-commission" label="Commission earned" value={inr(data.commission)} onClick={() => navigate("/admin?tab=payments")} />
+          <StatCard testid="stat-moderation" label="Pending moderation" value={data.pending_moderation} onClick={() => navigate("/admin?tab=moderation")} />
+          <StatCard testid="stat-tickets" label="Open tickets" value={data.open_tickets} onClick={() => navigate("/admin?tab=tickets")} />
         </div>
       )}
 

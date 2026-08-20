@@ -78,6 +78,16 @@ A SaaS platform combining Instagram (reels/social), Behance (portfolios), Etsy (
 - White-mode readability: darker muted text (25%), stronger borders (85%), font-meta weight 600
 - Testing: iteration_5 — 79/79 backend tests pass on clean serial run (78 passed + 1 xdist-skip under parallel load); all UI acceptance criteria verified by testing agent; follow-ups fixed: reels counter pins to 1/N (fresh-load scroll pin + dominant-entry observer), legacy /ship backfills shipping object, previous_violations scoped to reported user, KYC revoke suspends listings, picked_up timestamp, verifications compound index, KYC admin access logs
 
+## Iteration 6 — Checkout/address hardening, KYC detail modal, WhatsApp support, audit logs (2026-08-20)
+- Strict checkout→pay→order: order inserted as payment_pending, promoted to placed only after /payments/verify; payment_pending orders hidden from buyer /orders and seller /orders/seller lists
+- Structured addresses: {label(Home/Work/Other), full_name, mobile, house, area, landmark?, city, state, pin, country?} enforced server-side (ADDRESS_REQUIRED validation); Amazon-style address form at /cart checkout (addr-full-name/mobile/house/area/city/state/pin testids)
+- OrderDetailPage (/orders/:id): items, total breakdown, status timeline, shipping/tracking, address, WhatsApp help button
+- WhatsApp support (+91 8004513580 via wa.me): shared WhatsAppButton in cards.jsx; Support page banner, per-order help buttons on /orders and /orders/:id
+- Admin KYC detail modal (kyc-view-<id> → kyc-detail-modal-<id>): full unmasked GSTIN/MSME/PAN/Govt ID, address, documents with statuses/file links, notes history; admin access logged to kyc_access_logs
+- Clickable dashboard stat cards with "Open →" affordance navigating to relevant pages; audit_logs endpoint GET /api/admin/audit-logs
+- Fixes this iteration: SupportPage missing WhatsAppButton import (crash) fixed; recently-viewed dedupe (duplicate React keys); abandoned payment_pending orders hidden; TEST_ residue reels with http:// placeholder purged from DB; test media URLs switched to https
+- Testing: iteration_6 — 79/79 backend tests pass (serial); all frontend flows verified by testing agent (support, checkout, addresses, order detail, dashboard cards, KYC modal, reels desktop/mobile, audit logs)
+
 ## Backlog
 - P0: Real Razorpay + webhook verification; real SMS OTP provider
 - P1: Balance payment for advance-paid custom orders; refunds/disputes flow; live chat; reel video transcoding; saved-reels page; sales analytics aggregation pipeline

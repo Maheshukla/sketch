@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { BadgeCheck, FileCheck, Save, Send } from "lucide-react";
 import api, { fmtErr } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { FilePicker } from "@/pages/StudioPage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,7 +17,7 @@ const ID_TYPES = ["Aadhaar", "Passport", "Driving license", "Voter ID"];
 const EMPTY = {
   business_name: "", business_type: "proprietorship", gstin: "", msme: "", pan: "",
   govt_id_type: "", govt_id: "", address: "", contact_name: "", contact_phone: "",
-  account_number: "", ifsc: "",
+  account_number: "", ifsc: "", owner_name: "",
 };
 
 export default function VerificationPage() {

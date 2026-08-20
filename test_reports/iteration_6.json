@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 6 verification: full backend pytest suite passes 79/79 (serial, -n 0) after fixing 3 stale address tests to use structured schema. Frontend E2E across Support, Orders, OrderDetail, Cart/Checkout with structured address, Dashboard cards (artist stat cards + customer hub), Admin KYC listing, Reels desktop/mobile, and Audit Logs API all verified working. SupportPage.jsx (previously crashing) now renders fully with WhatsApp button href https://wa.me/918004513580, FAQs, and ticket form. Structured address form (addr-full-name / mobile / house / area / landmark / city / state / pin) works at /cart. OrderDetail (/orders/:id) shows items, timeline, address, and data-testid='order-whatsapp'. Reels counter shows N/M, ArrowDown navigates, action buttons don't overlap on desktop or mobile. Audit logs GET /api/admin/audit-logs returns real entries (order_delivered, order_picked_up, payment_paid, etc.). One notable gap: Admin KYC review shows full docs INLINE on the row rather than in a dedicated 'detail modal' as the request phrased it — admins do see full unmasked values, just not in a modal (may or may not satisfy 'detailed KYC modal' requirement).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Cart / global (auth page and post-login)", "issues": [
+        "React 'Encountered two children with the same key' warning repeated for keys 'rv-<userid>' and 'recent-<userid>' — likely RecentlyViewed or Recent lists render duplicate items with same key. Non-blocking but should be fixed.",
+        "Mixed Content warning: an <img> src='http://x/img.png' (seed placeholder) present somewhere in feed — should be replaced with a valid https placeholder or removed."
+      ]},
+      {"screen": "Admin KYC (/admin?tab=kyc)", "issues": [
+        "No dedicated detail modal — full doc details (PAN/GSTIN/MSME/Govt ID) are rendered inline in the row. Requirement in the iteration 6 brief called for a 'detailed Admin KYC modal'. Admins do see full unmasked values, so masking policy is satisfied, but a modal-based detail view is not implemented."
+      ]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_iter6.xml"
+  ],
+  "action_items": [
+    "(Optional) Wrap Admin KYC row detail into a proper modal (data-testid='kyc-detail-modal-<id>') to match Iteration 6 spec wording.",
+    "Fix React duplicate-key warnings for 'rv-<userid>' and 'recent-<userid>' lists (likely in RecentlyViewed / Recent components — dedupe by id or use composite keys).",
+    "Remove or replace the placeholder image URL 'http://x/img.png' in seed/data to eliminate the Mixed Content warning."
+  ],
+  "critical_code_review_comments": [
+    "server.py is ~2431 lines — should be split into route modules (auth, orders, admin, kyc, payments, reels) for maintainability.",
+    "Order lifecycle: an order is inserted with status='payment_pending' BEFORE payment (server.py:1351). Backend correctly excludes these from seller queues (server.py:2352), and payment_verify promotes them — this satisfies the spirit of 'order created only after payment verification' but leaves orphan 'payment_pending' orders visible in the buyer's /orders list if the user abandons checkout. Consider auto-purging or hiding abandoned payment_pending orders."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (updated 3 tests: TestAddresses.test_address_crud_and_checkout_flow, TestDiscountAndVariations.test_discount_and_variation_pricing, TestDefaultAddress.test_default_address_flow — switched to new structured address schema full_name/mobile/house/area/state + label must be Home/Work/Other)"
+  ],
+  "success_rate": {"backend": "100% (79/79)", "frontend": "~95% (all critical flows verified; minor gap: no KYC modal)"},
+  "test_credentials": "Verified via /app/memory/test_credentials.md — customer@sketch.app / Customer@123, admin@sketch.app / Admin@123, meera@sketch.app / Artist@123 all work.",
+  "seed_data_creation": "None (tests use existing seed + TEST_ prefixed transient data cleaned up in-suite).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest MUST be run with -n 0 (serial). pytest.ini pins -n 2 --dist loadscope; a race condition on stock depletion appears with parallel execution. Structured address schema is now enforced by backend: {label(Home/Work/Other), full_name, mobile, house, area, landmark?, city, state, pin, country?}. Cart at /cart contains the checkout flow (there is no /checkout route). Order lifecycle: checkout returns an order in payment_pending, then /api/payments/verify promotes it to 'placed'. Audit logs endpoint: GET /api/admin/audit-logs (admin only) works. KYC detail modal not implemented — details are inline in kyc-row-<id> cards.",
+  "rca of the issue": "The 3 initially failing backend tests were pre-existing tests that hard-coded the OLD address payload (line/city/pin/phone/label='TEST_*'). Iteration 6 introduced structured address validation server-side (server.py:485-506 ADDRESS_REQUIRED and label must be Home/Work/Other). Fix: tests updated to send the new required fields. No backend regression."
+}

@@ -28,7 +28,7 @@ async function uploadFile(file) {
   return data.url;
 }
 
-function FilePicker({ onUploaded, testid, accept = "image/*,video/mp4" }) {
+export function FilePicker({ onUploaded, testid, accept = "image/*,video/mp4,video/webm" }) {
   const [busy, setBusy] = useState(false);
   return (
     <label className={`border border-dashed border-border p-6 flex flex-col items-center gap-2 cursor-pointer hover:border-foreground/40 transition-colors ${busy ? "opacity-50" : ""}`}>
@@ -156,8 +156,8 @@ export default function StudioPage() {
         <TabsContent value="reel">
           <div className="grid lg:grid-cols-2 gap-8 max-w-4xl">
             <div className="space-y-4">
-              <FilePicker testid="reel-media-upload" accept="image/*,video/mp4"
-                onUploaded={(url) => setReel({ ...reel, media_url: url, media_type: url.endsWith(".mp4") ? "video" : "image" })} />
+              <FilePicker testid="reel-media-upload" accept="image/*,video/mp4,video/webm"
+                onUploaded={(url) => setReel({ ...reel, media_url: url, media_type: /\.(mp4|webm)$/i.test(url) ? "video" : "image" })} />
               <div>
                 <Label className="font-meta text-[10px]">Caption</Label>
                 <Textarea data-testid="reel-caption" className="rounded-none mt-1" value={reel.caption}

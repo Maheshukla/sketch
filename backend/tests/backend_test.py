@@ -315,7 +315,7 @@ class TestStudioAndModeration:
         assert r.json()["status"] == "approved"
 
     def test_upload_reel_and_approve(self, meera, admin):
-        r = meera.post(f"{API}/reels", json={"caption": "TEST_reel", "media_url": "http://x/img.png", "media_type": "image"})
+        r = meera.post(f"{API}/reels", json={"caption": "TEST_reel", "media_url": "https://placehold.co/600x800.png", "media_type": "image"})
         assert r.status_code == 200
         rid = r.json()["id"]
         assert r.json()["status"] == "pending"
@@ -656,15 +656,16 @@ class TestAddresses:
         for a in customer.get(f"{API}/users/me/addresses").json():
             customer.delete(f"{API}/users/me/addresses/{a['id']}")
         # missing required field
-        r = customer.post(f"{API}/users/me/addresses", json={"line": "1"})
+        r = customer.post(f"{API}/users/me/addresses", json={"house": "1"})
         assert r.status_code == 400
         # add
         r = customer.post(f"{API}/users/me/addresses", json={
-            "label": "TEST_Home", "line": "12 TEST Street", "city": "Mumbai",
-            "pin": "400001", "phone": "9999999999"})
+            "label": "Home", "full_name": "Test User", "mobile": "9999999999",
+            "house": "12 TEST Street", "area": "TEST Area", "city": "Mumbai",
+            "state": "Maharashtra", "pin": "400001"})
         assert r.status_code == 200
         addr = r.json()
-        assert addr["line"] == "12 TEST Street"
+        assert addr["house"] == "12 TEST Street"
         aid = addr["id"]
         # edit
         r = customer.put(f"{API}/users/me/addresses/{aid}", json={"city": "Pune"})
@@ -734,8 +735,9 @@ class TestDiscountAndVariations:
         addrs = customer.get(f"{API}/users/me/addresses").json()
         if not addrs:
             customer.post(f"{API}/users/me/addresses", json={
-                "label": "TEST_H", "line": "1 lane", "city": "Delhi",
-                "pin": "110001", "phone": "9000000000"})
+                "label": "Home", "full_name": "TEST User", "mobile": "9000000000",
+                "house": "1 lane", "area": "TEST Area", "city": "Delhi",
+                "state": "Delhi", "pin": "110001"})
             addrs = customer.get(f"{API}/users/me/addresses").json()
         aid = addrs[0]["id"]
         r = customer.post(f"{API}/orders/checkout",
@@ -1072,8 +1074,8 @@ class TestDefaultAddress:
         me = customer.get(f"{API}/auth/me").json()
         pre_ids = {a["id"] for a in me.get("addresses", [])}
         # add two TEST_ addresses
-        payload_a = {"line": "TEST_A1 street", "city": "TESTCITY", "pin": "560001", "phone": "9999900001", "label": "TEST_A"}
-        payload_b = {"line": "TEST_B1 street", "city": "TESTCITY", "pin": "560002", "phone": "9999900002", "label": "TEST_B"}
+        payload_a = {"full_name": "TEST A", "mobile": "9999900001", "house": "TEST_A1 street", "area": "Area A", "city": "TESTCITY", "state": "Karnataka", "pin": "560001", "label": "Home"}
+        payload_b = {"full_name": "TEST B", "mobile": "9999900002", "house": "TEST_B1 street", "area": "Area B", "city": "TESTCITY", "state": "Karnataka", "pin": "560002", "label": "Work"}
         r1 = customer.post(f"{API}/users/me/addresses", json=payload_a)
         assert r1.status_code == 200, r1.text
         r2 = customer.post(f"{API}/users/me/addresses", json=payload_b)
@@ -1082,8 +1084,8 @@ class TestDefaultAddress:
         me = customer.get(f"{API}/auth/me").json()
         new_addrs = [a for a in me.get("addresses", []) if a["id"] not in pre_ids]
         assert len(new_addrs) >= 2
-        a_id = next(a["id"] for a in new_addrs if a.get("label") == "TEST_A")
-        b_id = next(a["id"] for a in new_addrs if a.get("label") == "TEST_B")
+        a_id = next(a["id"] for a in new_addrs if a.get("label") == "Home" and a.get("pin") == "560001")
+        b_id = next(a["id"] for a in new_addrs if a.get("label") == "Work" and a.get("pin") == "560002")
 
         # If user had zero pre-existing addresses, first added should be default
         if not pre_ids:
@@ -1342,7 +1344,7 @@ class TestReportDetailAction:
     def test_report_detail_and_warn(self, customer, admin, meera):
         # meera creates a reel, admin approves
         r = meera.post(f"{API}/reels", json={
-            "caption": "TEST_rep_reel", "media_url": "http://x/img.png", "media_type": "image"})
+            "caption": "TEST_rep_reel", "media_url": "https://placehold.co/600x800.png", "media_type": "image"})
         assert r.status_code == 200
         reel_id = r.json()["id"]
         admin.post(f"{API}/admin/reels/{reel_id}/approve")

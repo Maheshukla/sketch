@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PageHeader, EmptyState, ProductCard } from "@/components/cards";
 
@@ -35,7 +36,8 @@ export default function CartPage() {
   const [busy, setBusy] = useState(false);
   const [addresses, setAddresses] = useState([]);
   const [addrId, setAddrId] = useState("");
-  const [addrForm, setAddrForm] = useState({ label: "Home", line: "", city: "", pin: "", phone: "" });
+  const EMPTY_ADDR = { label: "Home", full_name: "", mobile: "", house: "", area: "", landmark: "", city: "", state: "", pin: "", country: "India" };
+  const [addrForm, setAddrForm] = useState(EMPTY_ADDR);
   const [addrEditing, setAddrEditing] = useState(null);
   const [showAddrForm, setShowAddrForm] = useState(false);
   const navigate = useNavigate();
@@ -58,7 +60,12 @@ export default function CartPage() {
   }, []);
 
   const saveAddress = async () => {
-    if (!addrForm.line || !addrForm.city || !addrForm.pin) return toast.error("Line, city and PIN are required");
+    for (const f of ["full_name", "mobile", "house", "area", "city", "state", "pin"]) {
+      if (!addrForm[f]?.trim()) return toast.error(`${f.replace("_", " ")} is required`);
+    }
+    if (!/^[6-9]\d{9}$/.test(addrForm.mobile.replace(/\s/g, "").replace(/^\+91/, "")))
+      return toast.error("Enter a valid 10-digit Indian mobile number");
+    if (!/^\d{6}$/.test(addrForm.pin)) return toast.error("Enter a valid 6-digit PIN code");
     try {
       if (addrEditing) {
         await api.put(`/users/me/addresses/${addrEditing}`, addrForm);
@@ -69,7 +76,7 @@ export default function CartPage() {
       toast.success("Address saved");
       setShowAddrForm(false);
       setAddrEditing(null);
-      setAddrForm({ label: "Home", line: "", city: "", pin: "", phone: "" });
+      setAddrForm(EMPTY_ADDR);
       loadAddresses();
     } catch (e) {
       toast.error(fmtErr(e));
@@ -206,6 +213,7 @@ export default function CartPage() {
                     <div className="flex items-center justify-between gap-2">
                       <p className="font-display font-bold text-sm flex items-center gap-1.5">
                         <MapPin className="h-3.5 w-3.5 text-primary" /> {a.label}
+                        {a.is_default && <span className="font-meta text-[8px] text-amber-500 border border-amber-500/40 px-1.5 py-0.5 ml-1">Default</span>}
                       </p>
                       <div className="flex gap-2 items-center">
                         <button data-testid={`default-address-${a.id}`} onClick={(e) => { e.stopPropagation(); setDefaultAddr(a.id); }}
@@ -222,36 +230,55 @@ export default function CartPage() {
                         </button>
                       </div>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-1">{a.line}, {a.city} — {a.pin}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {a.house ? `${a.full_name}, ${a.house}, ${a.area}, ${a.city}, ${a.state} — ${a.pin}` : `${a.line}, ${a.city} — ${a.pin}`}
+                      {a.mobile && <span className="block mt-0.5">+91 {a.mobile}</span>}
+                    </p>
                   </div>
                 ))}
                 {showAddrForm ? (
                   <div className="border border-border/60 p-3 space-y-2" data-testid="address-form">
                     <div className="grid grid-cols-2 gap-2">
-                      <Input data-testid="addr-label" placeholder="Label (Home/Work)" className="rounded-none" value={addrForm.label}
-                        onChange={(e) => setAddrForm({ ...addrForm, label: e.target.value })} />
-                      <Input data-testid="addr-phone" placeholder="Phone" className="rounded-none" value={addrForm.phone}
-                        onChange={(e) => setAddrForm({ ...addrForm, phone: e.target.value })} />
+                      <Select value={addrForm.label} onValueChange={(v) => setAddrForm({ ...addrForm, label: v })}>
+                        <SelectTrigger data-testid="addr-label" className="rounded-none"><SelectValue /></SelectTrigger>
+                        <SelectContent className="rounded-none">
+                          {["Home", "Work", "Other"].map((l) => <SelectItem key={l} value={l}>{l}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      <Input data-testid="addr-full-name" placeholder="Full name *" className="rounded-none" value={addrForm.full_name}
+                        onChange={(e) => setAddrForm({ ...addrForm, full_name: e.target.value })} />
                     </div>
-                    <Input data-testid="addr-line" placeholder="Street address" className="rounded-none" value={addrForm.line}
-                      onChange={(e) => setAddrForm({ ...addrForm, line: e.target.value })} />
+                    <Input data-testid="addr-mobile" placeholder="Mobile number * (10-digit)" className="rounded-none" value={addrForm.mobile}
+                      onChange={(e) => setAddrForm({ ...addrForm, mobile: e.target.value })} />
+                    <Input data-testid="addr-house" placeholder="House / Flat / Building *" className="rounded-none" value={addrForm.house}
+                      onChange={(e) => setAddrForm({ ...addrForm, house: e.target.value })} />
+                    <Input data-testid="addr-area" placeholder="Area / Street / Locality *" className="rounded-none" value={addrForm.area}
+                      onChange={(e) => setAddrForm({ ...addrForm, area: e.target.value })} />
+                    <Input data-testid="addr-landmark" placeholder="Landmark (optional)" className="rounded-none" value={addrForm.landmark}
+                      onChange={(e) => setAddrForm({ ...addrForm, landmark: e.target.value })} />
                     <div className="grid grid-cols-2 gap-2">
-                      <Input data-testid="addr-city" placeholder="City" className="rounded-none" value={addrForm.city}
+                      <Input data-testid="addr-city" placeholder="City *" className="rounded-none" value={addrForm.city}
                         onChange={(e) => setAddrForm({ ...addrForm, city: e.target.value })} />
-                      <Input data-testid="addr-pin" placeholder="PIN code" className="rounded-none" value={addrForm.pin}
+                      <Input data-testid="addr-state" placeholder="State *" className="rounded-none" value={addrForm.state}
+                        onChange={(e) => setAddrForm({ ...addrForm, state: e.target.value })} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input data-testid="addr-pin" placeholder="PIN code * (6-digit)" className="rounded-none" value={addrForm.pin}
                         onChange={(e) => setAddrForm({ ...addrForm, pin: e.target.value })} />
+                      <Input data-testid="addr-country" placeholder="Country" className="rounded-none" value={addrForm.country}
+                        onChange={(e) => setAddrForm({ ...addrForm, country: e.target.value })} />
                     </div>
                     <div className="flex gap-2">
                       <Button data-testid="addr-save" onClick={saveAddress} className="rounded-none font-meta text-[9px] h-9">
                         {addrEditing ? "Update" : "Save address"}
                       </Button>
-                      <Button variant="outline" data-testid="addr-cancel" onClick={() => { setShowAddrForm(false); setAddrEditing(null); }}
+                      <Button variant="outline" data-testid="addr-cancel" onClick={() => { setShowAddrForm(false); setAddrEditing(null); setAddrForm(EMPTY_ADDR); }}
                         className="rounded-none font-meta text-[9px] h-9">Cancel</Button>
                     </div>
                   </div>
                 ) : (
                   <button data-testid="add-address-btn"
-                    onClick={() => { setAddrEditing(null); setAddrForm({ label: "Home", line: "", city: "", pin: "", phone: "" }); setShowAddrForm(true); }}
+                    onClick={() => { setAddrEditing(null); setAddrForm(EMPTY_ADDR); setShowAddrForm(true); }}
                     className="w-full border border-dashed border-border p-3 font-meta text-[9px] text-muted-foreground hover:text-foreground hover:border-foreground/40 transition-colors">
                     + Add new address
                   </button>

@@ -26,6 +26,7 @@ export default function AdminPage() {
   const [verifs, setVerifs] = useState([]);
   const [kycFilter, setKycFilter] = useState("");
   const [kycNote, setKycNote] = useState({});
+  const [kycDetail, setKycDetail] = useState(null);
   const [allOrders, setAllOrders] = useState([]);
   const [payments, setPayments] = useState([]);
   const [reportDetail, setReportDetail] = useState(null);
@@ -43,6 +44,8 @@ export default function AdminPage() {
 
   const loadVerifs = (status = "") =>
     api.get("/admin/verifications", { params: status ? { status } : {} }).then((r) => setVerifs(r.data));
+  const openKycDetail = (vid) =>
+    api.get(`/admin/verifications/${vid}`).then((r) => setKycDetail(r.data)).catch((e) => toast.error(fmtErr(e)));
   const loadRetailers = () => api.get("/admin/users", { params: { role: "retailer" } }).then((r) => setRetailers(r.data));
 
   useEffect(() => {
@@ -366,16 +369,10 @@ export default function AdminPage() {
                     </div>
                     <StatusBadge status={v.status} />
                   </div>
-                  <div className="grid sm:grid-cols-4 gap-3 mt-4 text-xs">
-                    <Kv k="GSTIN" v={v.gstin} /><Kv k="MSME" v={v.msme} /><Kv k="PAN" v={v.pan} />
-                    <Kv k={v.govt_id_type || "Govt ID"} v={v.govt_id} />
+                  <div className="mt-4">
+                    <Button size="sm" variant="outline" data-testid={`kyc-view-${v.id}`} className="rounded-none font-meta text-[9px]"
+                      onClick={() => openKycDetail(v.id)}>View details</Button>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-2">{v.address}</p>
-                  {v.notes?.length > 0 && (
-                    <p className="text-xs mt-2 border-l-2 border-border pl-3 text-muted-foreground">
-                      Last note — {v.notes[v.notes.length - 1].by}: {v.notes[v.notes.length - 1].text}
-                    </p>
-                  )}
                   {!["approved", "suspended"].includes(v.status) && ["super_admin", "admin"].includes(user.role) && (
                     <div className="flex flex-wrap gap-2 mt-4">
                       <Input data-testid={`kyc-note-${v.id}`} placeholder="Review note (optional)" className="rounded-none w-64"
@@ -460,6 +457,58 @@ export default function AdminPage() {
           </div>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={!!kycDetail} onOpenChange={() => setKycDetail(null)}>
+        <DialogContent className="rounded-none max-w-2xl max-h-[85vh] overflow-y-auto" data-testid={kycDetail ? `kyc-detail-modal-${kycDetail.id}` : "kyc-detail-modal"} data-lenis-prevent>
+          {kycDetail && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="font-display">{kycDetail.business_name}</DialogTitle>
+                <DialogDescription className="font-meta text-[10px]">{kycDetail.subject_type} · submitted {kycDetail.updated_at ? new Date(kycDetail.updated_at).toLocaleDateString() : ""}</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-5">
+                <div className="flex items-center gap-3">
+                  <StatusBadge status={kycDetail.status} />
+                  {kycDetail.reviewed_by && <span className="font-meta text-[9px] text-muted-foreground">reviewed by {kycDetail.reviewed_by}</span>}
+                </div>
+                <div className="grid sm:grid-cols-2 gap-4 text-sm">
+                  <Kv k="Contact" v={`${kycDetail.contact_name || "—"} · ${kycDetail.contact_phone || "—"}`} />
+                  <Kv k="Business type" v={kycDetail.business_type?.replace("_", " ") || "—"} />
+                  <Kv k="GSTIN" v={kycDetail.gstin || "—"} />
+                  <Kv k="MSME" v={kycDetail.msme || "—"} />
+                  <Kv k="PAN" v={kycDetail.pan || "—"} />
+                  <Kv k={kycDetail.govt_id_type || "Govt ID"} v={kycDetail.govt_id || "—"} />
+                </div>
+                {kycDetail.address && <p className="text-xs text-muted-foreground" data-testid="kyc-detail-address">{kycDetail.address}</p>}
+                {kycDetail.documents?.length > 0 && (
+                  <div data-testid="kyc-detail-documents">
+                    <p className="font-meta text-[10px] text-muted-foreground mb-2">Documents</p>
+                    <div className="space-y-2">
+                      {kycDetail.documents.map((d, i) => (
+                        <div key={d.id || i} className="flex items-center justify-between gap-3 border border-border/60 px-3 py-2 text-xs" data-testid={`kyc-doc-${d.id || i}`}>
+                          <span className="font-display font-bold">{d.label || d.type || d.name || `Document ${i + 1}`}</span>
+                          <span className="flex items-center gap-3">
+                            {d.status && <StatusBadge status={d.status} />}
+                            {(d.url || d.path) && <a href={fileUrl(d.url || d.path)} target="_blank" rel="noreferrer" className="font-meta text-[9px] text-primary">View file</a>}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {kycDetail.notes?.length > 0 && (
+                  <div className="space-y-1.5" data-testid="kyc-detail-notes">
+                    {kycDetail.notes.map((n, i) => (
+                      <p key={i} className="text-xs text-muted-foreground"><span className="font-display font-bold text-foreground">{n.by}:</span> {n.text}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
 
       <Dialog open={!!reportDetail} onOpenChange={() => setReportDetail(null)}>
         <DialogContent className="rounded-none max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="report-detail-modal">

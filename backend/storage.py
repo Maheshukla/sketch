@@ -12,7 +12,7 @@ storage_key = None
 
 MIME_TYPES = {
     "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
-    "webp": "image/webp", "gif": "image/gif", "mp4": "video/mp4",
+    "webp": "image/webp", "gif": "image/gif", "mp4": "video/mp4", "webm": "video/webm",
 }
 
 
