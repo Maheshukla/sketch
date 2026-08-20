@@ -15,16 +15,16 @@
         --popover-foreground: 0 0% 4%;
         --primary: 355 78% 56%;
         --primary-foreground: 0 0% 100%;
-        --secondary: 0 0% 95%;
+        --secondary: 0 0% 94%;
         --secondary-foreground: 0 0% 9%;
-        --muted: 0 0% 95%;
-        --muted-foreground: 0 0% 32%;
-        --accent: 0 0% 95%;
+        --muted: 0 0% 94%;
+        --muted-foreground: 0 0% 25%;
+        --accent: 0 0% 94%;
         --accent-foreground: 0 0% 9%;
         --destructive: 0 84% 60%;
         --destructive-foreground: 0 0% 98%;
-        --border: 0 0% 90%;
-        --input: 0 0% 90%;
+        --border: 0 0% 85%;
+        --input: 0 0% 85%;
         --ring: 355 78% 56%;
         --chart-1: 355 78% 56%;
         --chart-2: 0 0% 20%;
@@ -81,6 +81,7 @@
 
 .font-meta {
     font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.2em;
 }

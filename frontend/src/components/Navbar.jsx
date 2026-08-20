@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Bell, ChevronDown, Heart, LayoutDashboard, LogOut, Menu, Moon, Package, Plus, Search, ShoppingBag, Sparkles, Store, Sun, User, Users, LifeBuoy, Shield, Settings, Bookmark, Brush, Clapperboard, Image, Grid, Home, Compass, Store as ShopIcon, BadgeCheck } from "lucide-react";
+import { Bell, ChevronDown, Heart, LayoutDashboard, LogOut, Menu, Moon, MoreHorizontal, Package, Plus, Search, ShoppingBag, Sparkles, Store, Sun, User, Users, LifeBuoy, Shield, Settings, Bookmark, Brush, Clapperboard, Image, Grid, Home, Compass, Store as ShopIcon, BadgeCheck, RefreshCcw, FileText, Flag, Activity } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/App";
 import { toast } from "sonner";
@@ -15,6 +15,51 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 
 const SELLER_ROLES = ["artist", "retailer", "company_owner", "company_admin", "company_artist"];
 const STAFF = ["super_admin", "admin", "support"];
+
+function moreSections(user) {
+  if (!user) return [];
+  const sections = [];
+  if (user.role === "retailer") {
+    sections.push({ label: "Retailer", items: [
+      { label: "Retailer Dashboard", to: "/dashboard" }, { label: "Products", to: "/studio?tab=product" },
+      { label: "Inventory", to: "/studio?tab=listings" }, { label: "Orders", to: "/orders" },
+      { label: "Shipping", to: "/orders" }, { label: "Store Settings", to: "/settings" },
+      { label: "KYC Status", to: "/verification" },
+    ]});
+  } else if (user.role === "artist") {
+    sections.push({ label: "Artist", items: [
+      { label: "Artist Dashboard", to: "/dashboard" }, { label: "Portfolio", to: `/profile/${user.id}?tab=portfolio` },
+      { label: "Reels", to: `/profile/${user.id}?tab=reels` }, { label: "Products", to: "/studio?tab=listings" },
+      { label: "Custom Orders", to: "/custom-orders" }, { label: "Orders", to: "/orders" },
+      { label: "Earnings", to: "/dashboard" }, { label: "Profile Settings", to: "/settings" },
+    ]});
+  } else if (user.role?.startsWith("company_")) {
+    sections.push({ label: "Company", items: [
+      { label: "Company Dashboard", to: "/dashboard" }, { label: "Team", to: "/company" },
+      { label: "Requests & Projects", to: "/custom-orders" }, { label: "Assignments", to: "/custom-orders" },
+      { label: "Products", to: "/studio?tab=listings" }, { label: "Orders", to: "/orders" },
+      { label: "Company Verification", to: "/verification" }, { label: "Company Settings", to: "/settings" },
+    ]});
+  } else if (STAFF.includes(user.role)) {
+    sections.push({ label: "Administration", items: [
+      { label: "Admin Dashboard", to: "/admin" }, { label: "Moderation queue", to: "/admin" },
+      { label: "KYC / Verification", to: "/admin" }, { label: "Reports", to: "/admin" },
+    ]});
+  } else {
+    sections.push({ label: "Account", items: [
+      { label: "Orders", to: "/orders" }, { label: "Wishlist", to: "/wishlist" },
+      { label: "Saved", to: "/saved" }, { label: "Custom Requests", to: "/custom-orders" },
+      { label: "Addresses", to: "/cart" }, { label: "Payment history", to: "/orders" },
+    ]});
+  }
+  sections.push({ label: "General", items: [
+    { label: "Settings", to: "/settings" }, { label: "Your Activity", to: "/dashboard" },
+    { label: "Notifications", to: "/notifications" }, { label: "Help & Support", to: "/support" },
+    { label: "Report a Problem", to: "/support" }, { label: "Terms", to: "/terms" },
+    { label: "Privacy Policy", to: "/privacy" }, { label: "Build your platform", to: "/enquiry" },
+  ]});
+  return sections;
+}
 
 export default function Navbar() {
   const { user, logout } = useAuth();
@@ -121,6 +166,11 @@ export default function Navbar() {
                   {user.role === "customer" && <MenuItem testid="m-become-retailer" icon={BadgeCheck} label="Become a Retailer" onClick={becomeRetailer} />}
                   {STAFF.includes(user.role) && <MenuItem testid="m-admin" icon={Shield} label="Admin panel" onClick={() => go("/admin")} />}
                   <div className="mx-5 my-3 border-t border-border/60" />
+                  <p className="px-5 pb-1 font-meta text-[9px] text-muted-foreground">More</p>
+                  <MenuItem testid="m-help" icon={LifeBuoy} label="Help & Support" onClick={() => go("/support")} />
+                  <MenuItem testid="m-terms" icon={FileText} label="Terms" onClick={() => go("/terms")} />
+                  <MenuItem testid="m-privacy" icon={Shield} label="Privacy Policy" onClick={() => go("/privacy")} />
+                  <MenuItem testid="m-switch-account" icon={RefreshCcw} label="Switch Account" onClick={async () => { await logout(); go("/auth"); }} />
                   <MenuItem testid="m-logout" icon={LogOut} label="Logout" onClick={async () => { await logout(); go("/auth"); }} />
                 </>
               )}
@@ -159,6 +209,37 @@ export default function Navbar() {
 
           {user ? (
             <>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" data-testid="nav-more" className="rounded-none">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-64 rounded-none max-h-[70vh] overflow-y-auto" data-testid="more-menu">
+                  {moreSections(user).map((sec) => (
+                    <div key={sec.label}>
+                      <p className="px-3 pt-2 pb-1 font-meta text-[9px] text-muted-foreground">{sec.label}</p>
+                      {sec.items.map((it) => (
+                        <DropdownMenuItem key={it.label} data-testid={`more-${it.label.toLowerCase().replace(/[^a-z]+/g, "-")}`}
+                          onClick={() => navigate(it.to)}>
+                          {it.label}
+                        </DropdownMenuItem>
+                      ))}
+                    </div>
+                  ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem data-testid="more-appearance" onClick={toggle}>
+                    {theme === "dark" ? <Sun className="h-4 w-4 mr-2" /> : <Moon className="h-4 w-4 mr-2" />}
+                    Appearance: {theme}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem data-testid="more-switch-account" onClick={async () => { await logout(); navigate("/auth"); }}>
+                    <RefreshCcw className="h-4 w-4 mr-2" /> Switch account
+                  </DropdownMenuItem>
+                  <DropdownMenuItem data-testid="more-logout" onClick={async () => { await logout(); navigate("/auth"); }}>
+                    <LogOut className="h-4 w-4 mr-2" /> Log out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button variant="ghost" size="icon" data-testid="nav-wishlist" className="rounded-none hidden sm:flex relative" onClick={() => navigate("/wishlist")}>
                 <Heart className="h-4 w-4" />
                 {user.wishlist_count > 0 && (

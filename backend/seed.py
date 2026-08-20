@@ -73,6 +73,7 @@ async def seed(db):
         await db.login_attempts.create_index("locked_until", expireAfterSeconds=0)
     except Exception:
         pass
+    await db.verifications.create_index([("subject_id", 1), ("status", 1)])
     await db.products.create_index([("title", "text"), ("description", "text"), ("tags", "text")])
 
     import os
@@ -102,6 +103,34 @@ async def seed(db):
 
     for b in BANNERS:
         await db.banners.update_one({"title": b["title"]}, {"$set": b}, upsert=True)
+
+    retailer_user = await db.users.find_one({"email": "supplies@sketch.app"})
+    if retailer_user:
+        await db.verifications.update_one(
+            {"subject_id": str(retailer_user["_id"])},
+            {"$setOnInsert": {"subject_id": str(retailer_user["_id"]), "subject_type": "user",
+                              "subject_name": "ArtKart Supplies", "business_name": "ArtKart Supplies",
+                              "business_type": "proprietorship", "status": "approved",
+                              "gstin": "", "msme": "UDYAM-MH-00-0000000", "pan": "", "govt_id_type": "",
+                              "govt_id": "", "address": "Fort, Mumbai 400001",
+                              "contact_name": "ArtKart Supplies", "contact_phone": "9810010003",
+                              "account_number": "", "ifsc": "", "notes": [], "reviewed_by": "system",
+                              "created_at": datetime.now(timezone.utc)}},
+            upsert=True)
+    comp = await db.companies.find_one({})
+    if comp:
+        await db.verifications.update_one(
+            {"subject_id": str(comp["_id"])},
+            {"$setOnInsert": {"subject_id": str(comp["_id"]), "subject_type": "company",
+                              "subject_name": comp["name"], "business_name": comp["name"],
+                              "business_type": "private_limited", "status": "approved",
+                              "gstin": "27AABCP1234A1Z5", "msme": "", "pan": "AABCP1234A",
+                              "govt_id_type": "", "govt_id": "", "address": "Bandra West, Mumbai 400050",
+                              "contact_name": "Rohan Kapoor", "contact_phone": "9810010004",
+                              "account_number": "", "ifsc": "", "notes": [], "reviewed_by": "system",
+                              "created_at": datetime.now(timezone.utc)}},
+            upsert=True)
+        await db.companies.update_one({"_id": comp["_id"]}, {"$set": {"verified": True}})
 
     if not await db.collections.count_documents({"featured": True}):
         admin_user = await db.users.find_one({"email": admin_email})

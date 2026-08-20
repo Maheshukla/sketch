@@ -44,6 +44,8 @@ PACKAGING_FLAT = 49.0
 ADVANCE_RATE = 0.30
 RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "")
 RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "")
+COURIER_RATES = {"Delhivery": 99.0, "Ekart": 89.0, "DTDC": 95.0,
+                 "Blue Dart": 129.0, "India Post": 79.0, "Shiprocket": 105.0}
 
 try:
     import razorpay as _razorpay
@@ -665,6 +667,89 @@ async def remove_member(company_id: str, member_id: str, user=Depends(current_us
     return pub(await db.companies.find_one({"_id": company["_id"]}))
 
 
+# ---------------- Verification / KYC ----------------
+
+KYC_FIELDS = {"business_name", "business_type", "gstin", "msme", "pan", "govt_id_type",
+              "govt_id", "address", "contact_name", "contact_phone", "account_number", "ifsc"}
+KYC_STATUSES = {"draft", "submitted", "under_review", "approved", "rejected", "more_info", "suspended"}
+
+
+def mask_secret(v):
+    if not v:
+        return v
+    s = str(v)
+    return "*" * max(len(s) - 4, 0) + s[-4:]
+
+
+def public_verification(doc):
+    out = pub(doc)
+    for k in ("pan", "govt_id", "gstin", "msme", "account_number", "ifsc"):
+        if out.get(k):
+            out[k] = mask_secret(out[k])
+    return out
+
+
+@api_router.get("/verification/my")
+async def my_verification(user=Depends(current_user)):
+    queries = [{"subject_id": user["id"]}]
+    if user.get("company_id"):
+        queries.append({"subject_id": user["company_id"]})
+    docs = await db.verifications.find({"$or": queries}).to_list(5)
+    return [public_verification(d) for d in docs]
+
+
+@api_router.post("/verification/submit")
+async def submit_verification(request: Request, user=Depends(current_user)):
+    body = await request.json()
+    subject_type = body.get("subject_type", "user")
+    subject_id = user["id"]
+    subject_name = user["name"]
+    if subject_type == "company":
+        if not user.get("company_id"):
+            raise HTTPException(400, "No company account")
+        company, role = await company_role(user, user["company_id"])
+        if role not in {"owner", "admin"}:
+            raise HTTPException(403, "Only company owner/admin can submit verification")
+        subject_id = user["company_id"]
+        subject_name = company["name"]
+    elif user["role"] != "retailer":
+        raise HTTPException(400, "Only retailer accounts submit individual verification")
+    existing = await db.verifications.find_one({"subject_id": subject_id})
+    if existing and existing.get("status") == "approved":
+        raise HTTPException(400, "Already verified")
+    data = {k: v for k, v in body.items() if k in KYC_FIELDS}
+    if not data.get("business_name"):
+        raise HTTPException(400, "Business name is required")
+    action = body.get("action", "submit")
+    if action == "submit" and not any(data.get(k) for k in ("gstin", "msme", "pan", "govt_id")):
+        raise HTTPException(400, "Provide at least one identity document (GSTIN, MSME, PAN or government ID)")
+    status = "submitted" if action == "submit" else "draft"
+    doc = {**data, "subject_id": subject_id, "subject_type": subject_type, "subject_name": subject_name,
+           "status": status, "updated_at": datetime.now(timezone.utc)}
+    if existing:
+        await db.verifications.update_one({"_id": existing["_id"]}, {"$set": doc})
+        vid = existing["_id"]
+    else:
+        doc["created_at"] = datetime.now(timezone.utc)
+        doc["notes"] = []
+        res = await db.verifications.insert_one(doc)
+        vid = res.inserted_id
+    if action == "submit":
+        for admin in await db.users.find({"role": {"$in": list(ADMIN_ROLES)}}).to_list(10):
+            await notify(admin["_id"], "kyc", f"Verification submitted: {subject_name}", "/admin")
+    return public_verification(await db.verifications.find_one({"_id": vid}))
+
+
+async def seller_verified(user) -> bool:
+    if user["role"] == "retailer":
+        v = await db.verifications.find_one({"subject_id": user["id"], "status": "approved"})
+        return bool(v)
+    if user["role"].startswith("company_") and user.get("company_id"):
+        v = await db.verifications.find_one({"subject_id": user["company_id"], "status": "approved"})
+        return bool(v)
+    return True
+
+
 # ---------------- Portfolio ----------------
 
 class PortfolioIn(BaseModel):
@@ -837,6 +922,8 @@ class ProductIn(BaseModel):
 async def create_product(data: ProductIn, user=Depends(require("artist", "retailer", "company_owner", "company_admin", "company_artist"))):
     if data.product_type not in {"physical", "digital", "software"}:
         raise HTTPException(400, "Invalid product type")
+    if not await seller_verified(user):
+        raise HTTPException(403, "Verification required — complete KYC before listing products")
     seller_id = oid(user["id"])
     seller_type = "user"
     seller_name = user["name"]
@@ -1252,7 +1339,16 @@ async def ship_order(order_id: str, request: Request, user=Depends(current_user)
         raise HTTPException(403, "Not your order")
     await db.orders.update_one({"_id": order["_id"]}, {"$set": {
         "status": "shipped", "courier": courier, "tracking_id": body.get("tracking_id", ""),
-        "shipped_at": datetime.now(timezone.utc)}})
+        "shipped_at": datetime.now(timezone.utc),
+        "shipping": {
+            "provider": courier,
+            "shipment_id": f"SHP-{uuid.uuid4().hex[:10].upper()}",
+            "tracking_number": body.get("tracking_id", ""),
+            "pickup_status": "scheduled",
+            "shipping_charge": COURIER_RATES.get(courier, SHIPPING_FLAT),
+            "delivery_status": "in_transit",
+            "tracking_url": f"https://track.{courier.lower().replace(' ', '')}.in/{body.get('tracking_id', '')}" if body.get("tracking_id") else "",
+        }}})
     await notify(order["buyer_id"], "order", f"Your order shipped via {courier}", "/orders")
     return pub(await db.orders.find_one({"_id": order["_id"]}))
 
@@ -1274,6 +1370,7 @@ ORDER_TRANSITIONS = {
     "reject": ("placed", "cancelled", "seller"),
     "processing": ("accepted", "processing", "seller"),
     "shipped": (("accepted", "processing"), "shipped", "seller"),
+    "picked_up": ("shipped", "shipped", "seller"),
     "delivered": ("shipped", "delivered", "buyer"),
     "completed": ("delivered", "completed", "buyer"),
 }
@@ -1305,13 +1402,28 @@ async def update_order_status(order_id: str, request: Request, user=Depends(curr
         courier = body.get("courier", "")
         if courier not in COURIERS:
             raise HTTPException(400, "Select a valid courier partner")
+        tracking = body.get("tracking_id", "")
+        charge = float(body.get("shipping_charge") or COURIER_RATES.get(courier, SHIPPING_FLAT))
         update["courier"] = courier
-        update["tracking_id"] = body.get("tracking_id", "")
+        update["tracking_id"] = tracking
+        update["shipping"] = {
+            "provider": courier,
+            "shipment_id": f"SHP-{uuid.uuid4().hex[:10].upper()}",
+            "tracking_number": tracking,
+            "pickup_status": body.get("pickup_status", "scheduled"),
+            "shipping_charge": charge,
+            "delivery_status": "in_transit",
+            "tracking_url": f"https://track.{courier.lower().replace(' ', '')}.in/{tracking}" if tracking else "",
+        }
+    if action == "picked_up":
+        update["shipping.pickup_status"] = "picked_up"
+        update["shipping.picked_up_at"] = datetime.now(timezone.utc)
     if action == "reject":
         await db.payments.update_many({"ref_id": order_id, "purpose": "order", "escrow": "held"},
                                       {"$set": {"escrow": "refunded", "refunded_at": datetime.now(timezone.utc)}})
     if action == "delivered":
         await release_escrow(order_id, "order")
+        update["shipping.delivery_status"] = "delivered"
     await db.orders.update_one({"_id": order["_id"]}, {"$set": update})
     if actor == "seller":
         await notify(order["buyer_id"], "order", f"Order update: {to_state.replace('_', ' ')}", "/orders")
@@ -1493,6 +1605,8 @@ async def estimate_custom_request(cr_id: str, request: Request, user=Depends(cur
     if not cr or cr["status"] != "sent_to_creator":
         raise HTTPException(400, "Request not awaiting estimate")
     await cr_creator_check(user, cr)
+    if cr["target_type"] == "company" and not await seller_verified(user):
+        raise HTTPException(403, "Company verification required before accepting paid work")
     body = await request.json()
     estimate = {"cost": float(body["cost"]), "deadline": body.get("deadline", ""),
                 "message": body.get("message", ""), "by": user["name"],
@@ -1816,8 +1930,10 @@ async def admin_overview(user=Depends(require(*STAFF_ROLES))):
 
 
 @api_router.get("/admin/users")
-async def admin_users(q: str = "", user=Depends(require(*ADMIN_ROLES, "support"))):
+async def admin_users(q: str = "", role: str = "", user=Depends(require(*ADMIN_ROLES, "support"))):
     query = {"name": {"$regex": q, "$options": "i"}} if q else {}
+    if role:
+        query["role"] = role
     users = await db.users.find(query).limit(200).to_list(200)
     return [public_user(u) for u in users]
 
@@ -1879,6 +1995,176 @@ async def moderate(type: str, item_id: str, request: Request, user=Depends(requi
     if owner:
         await notify(owner, "moderation", f"Your {type[:-1]} was {status}", "/studio")
     return pub(item)
+
+
+@api_router.get("/admin/reports/{report_id}")
+async def report_detail(report_id: str, user=Depends(require(*STAFF_ROLES))):
+    r = await db.reports.find_one({"_id": oid(report_id)})
+    if not r:
+        raise HTTPException(404, "Report not found")
+    out = pub(r)
+    reporter = await db.users.find_one({"_id": r["reporter_id"]})
+    out["reporter"] = {"id": str(reporter["_id"]), "name": reporter["name"], "email": reporter["email"]} if reporter else None
+    content = None
+    reported_user = None
+    if r["target_type"] == "reel":
+        content = await db.reels.find_one({"_id": oid(r["target_id"])})
+        if content:
+            reported_user = await db.users.find_one({"_id": content["creator_id"]})
+    elif r["target_type"] == "product":
+        content = await db.products.find_one({"_id": oid(r["target_id"])})
+        if content:
+            reported_user = await db.users.find_one({"_id": content["seller_id"]})
+            if not reported_user:
+                comp = await db.companies.find_one({"_id": content["seller_id"]})
+                if comp:
+                    reported_user = await db.users.find_one({"_id": comp["owner_id"]})
+    else:
+        reported_user = await db.users.find_one({"_id": oid(r["target_id"])})
+    out["content"] = pub(content) if content else None
+    if reported_user:
+        out["reported_user"] = {"id": str(reported_user["_id"]), "name": reported_user["name"],
+                                "email": reported_user["email"], "role": reported_user["role"],
+                                "status": reported_user.get("status", "active")}
+        owner_content_ids = [str(r["target_id"])]
+        async for c in db.reels.find({"creator_id": reported_user["_id"]}, {"_id": 1}):
+            owner_content_ids.append(str(c["_id"]))
+        async for c in db.products.find({"seller_id": reported_user["_id"]}, {"_id": 1}):
+            owner_content_ids.append(str(c["_id"]))
+        out["previous_violations"] = await db.reports.count_documents(
+            {"status": "resolved", "target_id": {"$in": owner_content_ids}})
+    out["related_reports"] = await db.reports.count_documents(
+        {"target_id": r["target_id"], "_id": {"$ne": r["_id"]}})
+    out["notes"] = r.get("notes", [])
+    return out
+
+
+@api_router.put("/admin/reports/{report_id}")
+async def update_report(report_id: str, request: Request, user=Depends(require(*STAFF_ROLES))):
+    body = await request.json()
+    update = {}
+    if body.get("status"):
+        if body["status"] not in {"open", "under_review", "resolved", "rejected", "escalated"}:
+            raise HTTPException(400, "Invalid status")
+        update["status"] = body["status"]
+    note = (body.get("note") or "").strip()
+    if note:
+        await db.reports.update_one({"_id": oid(report_id)},
+                                    {"$push": {"notes": {"by": user["name"], "text": note,
+                                                         "at": datetime.now(timezone.utc).isoformat()}}})
+    if update:
+        update["handled_by"] = user["name"]
+        update["handled_at"] = datetime.now(timezone.utc)
+        await db.reports.update_one({"_id": oid(report_id)}, {"$set": update})
+    return pub(await db.reports.find_one({"_id": oid(report_id)}))
+
+
+@api_router.post("/admin/reports/{report_id}/action")
+async def report_action(report_id: str, request: Request, user=Depends(require(*ADMIN_ROLES))):
+    body = await request.json()
+    action = body.get("action")
+    if action not in {"remove_content", "restrict_content", "suspend_user", "warn_user"}:
+        raise HTTPException(400, "Invalid action")
+    r = await db.reports.find_one({"_id": oid(report_id)})
+    if not r:
+        raise HTTPException(404, "Report not found")
+    owner_id = None
+    if r["target_type"] == "reel":
+        reel = await db.reels.find_one({"_id": oid(r["target_id"])})
+        owner_id = reel["creator_id"] if reel else None
+        if action in {"remove_content", "restrict_content"} and reel:
+            await db.reels.update_one({"_id": reel["_id"]},
+                                      {"$set": {"status": "rejected" if action == "remove_content" else "restricted"}})
+    elif r["target_type"] == "product":
+        prod = await db.products.find_one({"_id": oid(r["target_id"])})
+        owner_id = prod["seller_id"] if prod else None
+        if action in {"remove_content", "restrict_content"} and prod:
+            await db.products.update_one({"_id": prod["_id"]},
+                                         {"$set": {"status": "rejected" if action == "remove_content" else "restricted"}})
+    else:
+        owner_id = oid(r["target_id"])
+    if action == "suspend_user" and owner_id:
+        await db.users.update_one({"_id": owner_id}, {"$set": {"status": "suspended"}})
+    if action == "warn_user" and owner_id:
+        await notify(owner_id, "warning", f"Policy warning: your content was reported ({r['reason'][:80]})", "/support")
+    if owner_id:
+        await notify(owner_id, "moderation", f"Moderation action on your {r['target_type']}: {action.replace('_', ' ')}", "/studio")
+    await db.reports.update_one({"_id": r["_id"]}, {"$push": {"notes": {
+        "by": user["name"], "text": f"Action: {action}", "at": datetime.now(timezone.utc).isoformat()}}})
+    return {"ok": True, "action": action}
+
+
+@api_router.get("/admin/orders")
+async def admin_orders(user=Depends(require(*STAFF_ROLES))):
+    return [pub(o) for o in await db.orders.find().sort("created_at", -1).to_list(300)]
+
+
+@api_router.get("/admin/payments")
+async def admin_payments(user=Depends(require(*STAFF_ROLES))):
+    return [pub(p) for p in await db.payments.find().sort("created_at", -1).to_list(300)]
+
+
+@api_router.get("/admin/companies")
+async def admin_companies(user=Depends(require(*STAFF_ROLES))):
+    comps = await db.companies.find().to_list(100)
+    out = []
+    for c in comps:
+        v = await db.verifications.find_one({"subject_id": str(c["_id"])})
+        out.append({**pub(c), "verification_status": v["status"] if v else "draft"})
+    return out
+
+
+@api_router.get("/admin/verifications")
+async def admin_verifications(status: str = "", user=Depends(require(*STAFF_ROLES))):
+    q = {"status": status} if status else {}
+    docs = await db.verifications.find(q).sort("updated_at", -1).to_list(200)
+    await db.kyc_access_logs.insert_one({"admin_id": oid(user["id"]), "admin_name": user["name"],
+                                         "filter": status, "at": datetime.now(timezone.utc)})
+    return [pub(d) for d in docs]
+
+
+@api_router.post("/admin/verifications/{vid}/review")
+async def review_verification(vid: str, request: Request, user=Depends(require(*ADMIN_ROLES))):
+    body = await request.json()
+    mapping = {"approve": "approved", "reject": "rejected", "more_info": "more_info",
+               "suspend": "suspended", "under_review": "under_review"}
+    action = body.get("action")
+    if action not in mapping:
+        raise HTTPException(400, "Invalid action")
+    v = await db.verifications.find_one({"_id": oid(vid)})
+    if not v:
+        raise HTTPException(404, "Verification not found")
+    await db.verifications.update_one({"_id": v["_id"]}, {
+        "$set": {"status": mapping[action], "reviewed_by": user["name"],
+                 "reviewed_at": datetime.now(timezone.utc)},
+        "$push": {"notes": {"by": user["name"], "text": body.get("note", ""),
+                            "at": datetime.now(timezone.utc).isoformat()}}})
+    if mapping[action] in {"rejected", "suspended"}:
+        await db.products.update_many({"seller_id": oid(v["subject_id"])},
+                                      {"$set": {"status": "suspended"}})
+    if v["subject_type"] == "company":
+        await db.companies.update_one({"_id": oid(v["subject_id"])},
+                                      {"$set": {"verified": mapping[action] == "approved"}})
+        company = await db.companies.find_one({"_id": oid(v["subject_id"])})
+        for m in (company["members"] if company else []):
+            if m["role"] in {"owner", "admin"}:
+                await notify(m["user_id"], "kyc",
+                             f"Company verification {mapping[action].replace('_', ' ')}", "/verification")
+    else:
+        await notify(oid(v["subject_id"]), "kyc",
+                     f"Your verification was {mapping[action].replace('_', ' ')}", "/verification")
+    return pub(await db.verifications.find_one({"_id": v["_id"]}))
+
+
+@api_router.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, user=Depends(require("super_admin"))):
+    target = await db.users.find_one({"_id": oid(user_id)})
+    if not target:
+        raise HTTPException(404, "User not found")
+    if target["role"] == "super_admin":
+        raise HTTPException(400, "Cannot delete super admin")
+    await db.users.delete_one({"_id": target["_id"]})
+    return {"ok": True}
 
 
 @api_router.get("/admin/reports")

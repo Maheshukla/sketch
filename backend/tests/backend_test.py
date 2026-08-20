@@ -1124,3 +1124,318 @@ class TestAuthMeCounters:
             assert k in me, f"missing {k} in /auth/me"
             assert isinstance(me[k], int)
 
+
+
+# ======================================================================
+# Iteration 5 — KYC, shipping object, report detail/action, admin tabs
+# ======================================================================
+
+def _register(email, name, role, pwd="Test@1234"):
+    r = requests.post(f"{API}/auth/register",
+                      json={"email": email, "name": name, "password": pwd, "role": role})
+    return r
+
+
+def _login(email, pwd="Test@1234"):
+    s = requests.Session()
+    s.headers.update({"Content-Type": "application/json"})
+    r = s.post(f"{API}/auth/login", json={"email": email, "password": pwd})
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+    return s
+
+
+# ---- Retailer KYC full flow ----
+class TestRetailerKYC:
+    def test_unverified_retailer_blocked_then_approved(self, admin):
+        email = f"TEST_r_{uuid.uuid4().hex[:8]}@x.com"
+        r = _register(email, "TEST_Retailer", "retailer")
+        assert r.status_code == 200, r.text
+        retailer = _login(email)
+
+        # 1) creating product without KYC → 403
+        pr = retailer.post(f"{API}/products", json={
+            "title": "TEST_kyc_block", "description": "d", "category": "Supplies",
+            "price": 100, "stock": 5, "product_type": "physical"})
+        assert pr.status_code == 403, pr.text
+        assert "verification" in pr.text.lower() or "kyc" in pr.text.lower()
+
+        # 2) submit without identity → 400
+        bad = retailer.post(f"{API}/verification/submit", json={
+            "subject_type": "user", "action": "submit",
+            "business_name": "TEST_Biz"})
+        assert bad.status_code == 400, bad.text
+
+        # 3) draft with only business_name → allowed
+        drf = retailer.post(f"{API}/verification/submit", json={
+            "subject_type": "user", "action": "save",
+            "business_name": "TEST_Biz"})
+        assert drf.status_code == 200
+        assert drf.json()["status"] == "draft"
+
+        # 4) submit with only PAN → status submitted, PAN masked in /my
+        sub = retailer.post(f"{API}/verification/submit", json={
+            "subject_type": "user", "action": "submit",
+            "business_name": "TEST_Biz", "business_type": "sole_prop",
+            "pan": "ABCDE1234F", "contact_name": "T", "contact_phone": "9999999999"})
+        assert sub.status_code == 200, sub.text
+        vjson = sub.json()
+        assert vjson["status"] == "submitted"
+        # PAN should be masked (last 4 shown) in submit response too
+        assert vjson.get("pan", "").endswith("234F"), f"pan not masked: {vjson.get('pan')}"
+        assert "*" in vjson.get("pan", "")
+
+        my = retailer.get(f"{API}/verification/my")
+        assert my.status_code == 200
+        docs = my.json()
+        assert len(docs) >= 1
+        d = docs[0]
+        assert d["status"] == "submitted"
+        assert d["pan"].endswith("234F") and "*" in d["pan"]
+
+        vid = vjson["id"]
+
+        # 5) admin lists and sees FULL pan
+        alist = admin.get(f"{API}/admin/verifications").json()
+        arow = next((x for x in alist if x["id"] == vid), None)
+        assert arow is not None
+        assert arow.get("pan") == "ABCDE1234F", f"admin should see full pan, got {arow.get('pan')}"
+
+        # 6) still cannot create product (submitted != approved)
+        pr2 = retailer.post(f"{API}/products", json={
+            "title": "TEST_kyc_block2", "description": "d", "category": "Supplies",
+            "price": 100, "stock": 5, "product_type": "physical"})
+        assert pr2.status_code == 403
+
+        # 7) admin approves
+        rev = admin.post(f"{API}/admin/verifications/{vid}/review",
+                         json={"action": "approve", "note": "TEST_ok"})
+        assert rev.status_code == 200, rev.text
+        assert rev.json()["status"] == "approved"
+
+        # 8) retailer can now create product
+        pr3 = retailer.post(f"{API}/products", json={
+            "title": "TEST_kyc_ok", "description": "d", "category": "Supplies",
+            "price": 100, "stock": 5, "product_type": "physical"})
+        assert pr3.status_code == 200, pr3.text
+        assert pr3.json()["title"] == "TEST_kyc_ok"
+
+        # 9) /my shows approved
+        my2 = retailer.get(f"{API}/verification/my").json()
+        assert my2[0]["status"] == "approved"
+
+    def test_pre_approved_retailer_can_create(self):
+        # supplies@sketch.app is grandfathered
+        supplies = _sess(*CREDS["supplies"])
+        r = supplies.post(f"{API}/products", json={
+            "title": f"TEST_pre_{uuid.uuid4().hex[:6]}", "description": "d",
+            "category": "Supplies", "price": 50, "stock": 3, "product_type": "physical"})
+        assert r.status_code == 200, r.text
+
+
+# ---- Company KYC ----
+class TestCompanyKYC:
+    def test_pre_approved_company_status(self, studio):
+        my = studio.get(f"{API}/verification/my").json()
+        # studio's company should have approved verification
+        assert any(d.get("status") == "approved" for d in my), f"expected approved company kyc, got {my}"
+
+    def test_company_artist_cannot_submit(self, studioartist):
+        r = studioartist.post(f"{API}/verification/submit", json={
+            "subject_type": "company", "action": "submit",
+            "business_name": "TEST", "pan": "ABCDE1234F"})
+        assert r.status_code == 403
+
+    def test_admin_companies_endpoint(self, admin):
+        r = admin.get(f"{API}/admin/companies")
+        assert r.status_code == 200
+        rows = r.json()
+        assert len(rows) >= 1
+        assert any(c.get("verification_status") == "approved" for c in rows)
+
+
+# ---- Shipping object via /status action=shipped/picked_up/delivered ----
+class TestShippingObject:
+    def _prepare_placed_order(self, customer):
+        # find or create a placed order using meera's product
+        orders = customer.get(f"{API}/orders").json()
+        placed = next((o for o in orders if o["status"] == "placed"), None)
+        if placed:
+            return placed
+        # else create one via checkout (reuse pattern from TestCheckout)
+        prods = requests.get(f"{API}/products").json()
+        meera_id = requests.post(f"{API}/auth/login", json={
+            "email": CREDS["meera"][0], "password": CREDS["meera"][1]}).json()["id"]
+        target = next((p for p in prods if p.get("seller_id") == meera_id
+                       and p.get("product_type") == "physical" and p.get("stock", 0) > 0), None)
+        if not target:
+            return None
+        customer.delete(f"{API}/cart/{target['id']}")
+        customer.post(f"{API}/cart", json={"product_id": target["id"], "qty": 1})
+        co = customer.post(f"{API}/orders/checkout",
+                           json={"payment_method": "upi", "address": "TEST addr"})
+        if co.status_code != 200:
+            return None
+        order_id = co.json()["order"]["id"]
+        total = co.json()["order"]["total"]
+        pc = customer.post(f"{API}/payments/create",
+                           json={"amount": total, "purpose": "order", "ref_id": order_id}).json()
+        pv = customer.post(f"{API}/payments/verify",
+                           json={"order_id": pc["order_id"], "method": "upi"}).json()
+        customer.post(f"{API}/orders/{order_id}/pay", json={"payment_db_id": pv["id"]})
+        return customer.get(f"{API}/orders/{order_id}").json() if False else \
+               next((o for o in customer.get(f"{API}/orders").json() if o["id"] == order_id), None)
+
+    def test_shipping_object_and_picked_up(self, customer, meera):
+        placed = self._prepare_placed_order(customer)
+        if not placed:
+            pytest.skip("could not obtain a placed order")
+        seller_id = placed["items"][0]["seller_id"]
+        # find seller session
+        seller = None
+        for k in ("meera", "aarav", "supplies", "studio"):
+            s = _sess(*CREDS[k])
+            me = s.get(f"{API}/auth/me").json()
+            if me["id"] == seller_id or me.get("company_id") == seller_id:
+                seller = s; break
+        if not seller:
+            pytest.skip("no seller session")
+
+        # accept (placed → accepted)
+        r = seller.post(f"{API}/orders/{placed['id']}/status", json={"action": "accept"})
+        assert r.status_code == 200, r.text
+        # ship using status action=shipped with courier Ekart (89.0)
+        r = seller.post(f"{API}/orders/{placed['id']}/status",
+                        json={"action": "shipped", "courier": "Ekart", "tracking_id": "TESTTRK99"})
+        assert r.status_code == 200, r.text
+        o = r.json()
+        assert o["status"] == "shipped"
+        sh = o.get("shipping") or {}
+        assert sh.get("provider") == "Ekart"
+        assert sh.get("shipment_id", "").startswith("SHP-")
+        assert sh.get("tracking_number") == "TESTTRK99"
+        assert sh.get("shipping_charge") == 89.0
+        assert "track.ekart.in" in sh.get("tracking_url", "")
+        assert sh.get("delivery_status") == "in_transit"
+
+        # picked_up transitions
+        r = seller.post(f"{API}/orders/{placed['id']}/status", json={"action": "picked_up"})
+        assert r.status_code == 200, r.text
+        o = r.json()
+        assert o.get("shipping", {}).get("pickup_status") == "picked_up"
+
+        # buyer marks delivered
+        r = customer.post(f"{API}/orders/{placed['id']}/status", json={"action": "delivered"})
+        assert r.status_code == 200, r.text
+        o = r.json()
+        assert o["status"] == "delivered"
+        assert o.get("shipping", {}).get("delivery_status") == "delivered"
+
+    def test_courier_rate_card(self, admin):
+        # Also assert /couriers endpoint still includes the 6 rate-card names
+        cs = requests.get(f"{API}/couriers").json()
+        for name in ("Delhivery", "Ekart", "DTDC", "Blue Dart", "India Post", "Shiprocket"):
+            assert name in cs, f"missing courier {name}"
+
+
+# ---- Report detail + action ----
+class TestReportDetailAction:
+    def test_report_detail_and_warn(self, customer, admin, meera):
+        # meera creates a reel, admin approves
+        r = meera.post(f"{API}/reels", json={
+            "caption": "TEST_rep_reel", "media_url": "http://x/img.png", "media_type": "image"})
+        assert r.status_code == 200
+        reel_id = r.json()["id"]
+        admin.post(f"{API}/admin/reels/{reel_id}/approve")
+
+        # customer reports it
+        r = customer.post(f"{API}/reports",
+                          json={"target_type": "reel", "target_id": reel_id,
+                                "reason": "TEST_spam content xxx"})
+        assert r.status_code == 200, r.text
+
+        # locate the report
+        reports = admin.get(f"{API}/admin/reports").json()
+        rep = next((x for x in reports if x.get("target_id") == reel_id
+                    and x.get("reason", "").startswith("TEST_")), None)
+        assert rep is not None
+        rep_id = rep["id"]
+
+        # detail
+        d = admin.get(f"{API}/admin/reports/{rep_id}")
+        assert d.status_code == 200, d.text
+        dj = d.json()
+        assert dj["reporter"]["email"] == CREDS["customer"][0]
+        assert dj["reported_user"]["email"] == CREDS["meera"][0]
+        assert dj["content"] is not None
+        assert dj["content"]["id"] == reel_id
+        assert "related_reports" in dj
+
+        # PUT status + note
+        pu = admin.put(f"{API}/admin/reports/{rep_id}",
+                       json={"status": "under_review", "note": "TEST_investigating"})
+        assert pu.status_code == 200
+        assert pu.json()["status"] == "under_review"
+
+        # action: warn_user
+        meera_id = meera.get(f"{API}/auth/me").json()["id"]
+        act = admin.post(f"{API}/admin/reports/{rep_id}/action",
+                         json={"action": "warn_user"})
+        assert act.status_code == 200, act.text
+        assert act.json()["action"] == "warn_user"
+
+        post = meera.get(f"{API}/notifications").json()
+        assert any(n.get("type") == "warning" or "policy warning" in (n.get("message", "") + n.get("text", "")).lower()
+                   for n in post[:5]), f"expected new warning notification, got top5={post[:5]}"
+
+        # action: remove_content → reel status rejected
+        act2 = admin.post(f"{API}/admin/reports/{rep_id}/action",
+                          json={"action": "remove_content"})
+        assert act2.status_code == 200
+
+        # admin bad action → 400
+        bad = admin.post(f"{API}/admin/reports/{rep_id}/action",
+                        json={"action": "nuke"})
+        assert bad.status_code == 400
+
+
+# ---- Admin tabs + role filter + delete ----
+class TestAdminTabs:
+    def test_admin_orders_payments(self, admin):
+        r1 = admin.get(f"{API}/admin/orders")
+        assert r1.status_code == 200 and isinstance(r1.json(), list)
+        r2 = admin.get(f"{API}/admin/payments")
+        assert r2.status_code == 200 and isinstance(r2.json(), list)
+
+    def test_admin_users_role_filter(self, admin):
+        r = admin.get(f"{API}/admin/users?role=customer")
+        assert r.status_code == 200
+        users = r.json()
+        assert len(users) >= 1
+        assert all(u["role"] == "customer" for u in users)
+
+    def test_super_admin_delete_and_admin_forbidden(self, super_admin, admin):
+        # create victim customer
+        email = f"TEST_del_{uuid.uuid4().hex[:6]}@x.com"
+        rr = _register(email, "TEST_Delete", "customer")
+        assert rr.status_code == 200, rr.text
+        me = _login(email).get(f"{API}/auth/me").json()
+        uid = me["id"]
+
+        # non-super admin cannot delete → 403
+        r = admin.delete(f"{API}/admin/users/{uid}")
+        assert r.status_code == 403, r.text
+
+        # super_admin deletes
+        r = super_admin.delete(f"{API}/admin/users/{uid}")
+        assert r.status_code == 200, r.text
+        # verify user gone: login should fail
+        r = requests.post(f"{API}/auth/login", json={"email": email, "password": "Test@1234"})
+        assert r.status_code in (401, 429)
+
+    def test_super_admin_cannot_delete_super(self, super_admin):
+        # find a super_admin id
+        users = super_admin.get(f"{API}/admin/users?role=super_admin").json()
+        if not users:
+            pytest.skip("no super admin in list (role filter)")
+        r = super_admin.delete(f"{API}/admin/users/{users[0]['id']}")
+        assert r.status_code == 400

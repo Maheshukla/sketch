@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Bookmark, Flag, Heart, MessageCircle, Send, ShoppingBag, Sparkles, UserPlus, X, Zap } from "lucide-react";
+import { Bookmark, ChevronDown, ChevronUp, Flag, Heart, MessageCircle, Send, ShoppingBag, Sparkles, UserPlus, X, Zap } from "lucide-react";
 import api, { fmtErr, inr, fileUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { ReportDialog } from "@/components/cards";
@@ -19,7 +19,69 @@ export default function ReelsPage() {
   const [skip, setSkip] = useState(0);
   const [exhausted, setExhausted] = useState(false);
   const sentinelRef = useRef(null);
+  const containerRef = useRef(null);
+  const reelRefs = useRef([]);
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const pinnedRef = useRef(false);
+  const [autoScroll, setAutoScroll] = useState(() => sessionStorage.getItem("sketch-autoscroll") === "1");
   const { user } = useAuth();
+
+  useEffect(() => {
+    if (!pinnedRef.current && reels.length && containerRef.current) {
+      containerRef.current.scrollTop = 0;
+      setCurrentIdx(0);
+      pinnedRef.current = true;
+    }
+  }, [reels.length]);
+
+  const goTo = (i) => {
+    const el = reelRefs.current[i];
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const toggleAutoScroll = () => {
+    setAutoScroll((v) => {
+      sessionStorage.setItem("sketch-autoscroll", v ? "0" : "1");
+      return !v;
+    });
+  };
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        goTo(Math.max(currentIdx - 1, 0));
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        goTo(Math.min(currentIdx + 1, reels.length - 1));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [currentIdx, reels.length]);
+
+  useEffect(() => {
+    const obs = new IntersectionObserver((entries) => {
+      const visible = entries.filter((e) => e.isIntersecting);
+      if (!visible.length) return;
+      const best = visible.reduce((a, b) => (b.intersectionRatio > a.intersectionRatio ? b : a));
+      const idx = Number(best.target.dataset.idx);
+      if (!Number.isNaN(idx)) setCurrentIdx(idx);
+    }, { threshold: [0, 0.25, 0.5, 0.75, 1], root: containerRef.current });
+    reelRefs.current.forEach((el) => el && obs.observe(el));
+    return () => obs.disconnect();
+  }, [reels.length]);
+
+  useEffect(() => {
+    if (!autoScroll || !reels.length) return;
+    if (currentIdx >= reels.length - 1) return;
+    const reel = reels[currentIdx];
+    if (!reel || reel.media_type === "video") return;
+    const t = setTimeout(() => goTo(currentIdx + 1), 8000);
+    return () => clearTimeout(t);
+  }, [autoScroll, currentIdx, reels]);
 
   const load = (append = false, tag = hashtag, skipCount = 0) =>
     api.get("/reels", { params: { sort: tag ? "" : "random", hashtag: tag, skip: skipCount, limit: 10 } })
@@ -29,6 +91,11 @@ export default function ReelsPage() {
           if (!r.data.length) setExhausted(true);
         } else {
           setReels(r.data);
+          requestAnimationFrame(() => {
+            containerRef.current?.scrollTo({ top: 0, behavior: "auto" });
+            setCurrentIdx(0);
+            setTimeout(() => containerRef.current?.scrollTo({ top: 0, behavior: "auto" }), 120);
+          });
         }
         if (!append && r.data.length < 10) setExhausted(true);
       })
@@ -57,29 +124,54 @@ export default function ReelsPage() {
   }, [exhausted, hashtag]);
 
   return (
-    <div className="reel-snap h-[calc(100vh-4rem)] overflow-y-scroll bg-[#050505]" data-testid="reels-page">
-      {hashtag && (
-        <div className="sticky top-0 z-30 bg-black/80 backdrop-blur-xl px-4 py-3 flex items-center gap-3">
-          <span className="font-meta text-[10px] text-primary" data-testid="hashtag-filter">#{hashtag}</span>
-          <button data-testid="clear-hashtag" onClick={() => setHashtag("")} className="font-meta text-[10px] text-white/60 hover:text-white">
-            ✕ clear
+    <div className="relative">
+      <div className="fixed left-4 sm:left-8 bottom-6 z-40" data-testid="autoscroll-control">
+        <button data-testid="autoscroll-toggle" onClick={toggleAutoScroll}
+          className={`font-meta text-[9px] px-3 py-2 border backdrop-blur-xl transition-colors ${autoScroll ? "border-primary text-primary bg-black/60" : "border-white/30 text-white/80 bg-black/40"}`}>
+          Auto Scroll: {autoScroll ? "ON" : "OFF"}
+        </button>
+      </div>
+
+      {reels.length > 1 && (
+        <div className="fixed right-3 sm:right-6 top-20 z-40 flex flex-col gap-2" data-testid="reel-nav">
+          <button data-testid="reel-prev" onClick={() => goTo(Math.max(currentIdx - 1, 0))} disabled={currentIdx === 0}
+            className="h-10 w-10 border border-white/30 bg-black/50 backdrop-blur-xl text-white flex items-center justify-center hover:bg-white hover:text-black transition-colors disabled:opacity-30">
+            <ChevronUp className="h-5 w-5" />
+          </button>
+          <span className="font-meta text-[9px] text-white/60 text-center" data-testid="reel-counter">{currentIdx + 1}/{reels.length}</span>
+          <button data-testid="reel-next" onClick={() => goTo(Math.min(currentIdx + 1, reels.length - 1))} disabled={currentIdx >= reels.length - 1}
+            className="h-10 w-10 border border-white/30 bg-black/50 backdrop-blur-xl text-white flex items-center justify-center hover:bg-white hover:text-black transition-colors disabled:opacity-30">
+            <ChevronDown className="h-5 w-5" />
           </button>
         </div>
       )}
-      {reels.map((reel) => (
-        <ReelItem key={reel.id} reel={reel} user={user} patch={patch} reload={load} onTag={setHashtag} />
-      ))}
-      <div ref={sentinelRef} className="h-4" data-testid="reels-sentinel" />
-      {!reels.length && (
-        <div className="h-[calc(100vh-4rem)] flex items-center justify-center text-white/50 font-meta text-xs">
-          No reels yet
-        </div>
-      )}
+
+      <div ref={containerRef} className="reel-snap h-[calc(100vh-4rem)] overflow-y-scroll bg-[#050505]" data-testid="reels-page">
+        {hashtag && (
+          <div className="sticky top-0 z-30 bg-black/80 backdrop-blur-xl px-4 py-3 flex items-center gap-3">
+            <span className="font-meta text-[10px] text-primary" data-testid="hashtag-filter">#{hashtag}</span>
+            <button data-testid="clear-hashtag" onClick={() => setHashtag("")} className="font-meta text-[10px] text-white/60 hover:text-white">
+              ✕ clear
+            </button>
+          </div>
+        )}
+        {reels.map((reel, i) => (
+          <ReelItem key={reel.id} reel={reel} user={user} patch={patch} reload={load} onTag={setHashtag}
+            idx={i} onVideoEnd={() => autoScroll && goTo(Math.min(i + 1, reels.length - 1))}
+            ref={(el) => (reelRefs.current[i] = el)} />
+        ))}
+        <div ref={sentinelRef} className="h-4" data-testid="reels-sentinel" />
+        {!reels.length && (
+          <div className="h-[calc(100vh-4rem)] flex items-center justify-center text-white/50 font-meta text-xs">
+            No reels yet
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-function ReelItem({ reel, user, patch, reload, onTag }) {
+function ReelItem({ reel, user, patch, reload, onTag, idx, onVideoEnd, ref }) {
   const navigate = useNavigate();
   const [showComments, setShowComments] = useState(false);
   const [comments, setComments] = useState([]);
@@ -165,10 +257,11 @@ function ReelItem({ reel, user, patch, reload, onTag }) {
   if (dead) return null;
 
   return (
-    <section className="relative h-[calc(100vh-4rem)] w-full flex items-center justify-center overflow-hidden" data-testid={`reel-${reel.id}`}>
+    <section ref={ref} data-idx={idx} className="relative h-[calc(100vh-4rem)] w-full flex items-center justify-center overflow-hidden" data-testid={`reel-${reel.id}`}>
       <div className="absolute inset-0">
         {reel.media_type === "video" ? (
-          <video ref={videoRef} src={fileUrl(reel.media_url)} className="h-full w-full object-cover" autoPlay loop muted playsInline
+          <video ref={videoRef} src={fileUrl(reel.media_url)} className="h-full w-full object-cover" autoPlay loop={!onVideoEnd} muted playsInline
+            onEnded={onVideoEnd}
             onError={() => setDead(true)} />
         ) : (
           <img src={fileUrl(reel.media_url)} alt={reel.caption} className="h-full w-full object-cover kenburns"

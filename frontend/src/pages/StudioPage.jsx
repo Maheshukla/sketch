@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Clapperboard, ImagePlus, PackagePlus, Trash2, Upload } from "lucide-react";
 import api, { fmtErr, inr, fileUrl } from "@/lib/api";
@@ -56,8 +56,20 @@ function FilePicker({ onUploaded, testid, accept = "image/*,video/mp4" }) {
 
 export default function StudioPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") || "reel";
+  const [verifs, setVerifs] = useState([]);
+
+  useEffect(() => {
+    api.get("/verification/my").then((r) => setVerifs(r.data)).catch(() => {});
+  }, []);
+
+  const needsKyc = user?.role === "retailer"
+    ? !verifs.some((v) => v.subject_type === "user" && v.status === "approved")
+    : user?.role?.startsWith("company_")
+      ? !verifs.some((v) => v.subject_type === "company" && v.status === "approved")
+      : false;
   const [myProducts, setMyProducts] = useState([]);
   const [reel, setReel] = useState({ caption: "", media_url: "", media_type: "image", product_id: "" });
   const [product, setProduct] = useState({ title: "", description: "", category: "Painting", subcategory: "Watercolor", price: "", stock: 1, product_type: "physical", images: [] });
@@ -120,6 +132,18 @@ export default function StudioPage() {
     <div className="max-w-[1200px] mx-auto px-4 sm:px-8 py-12" data-testid="studio-page">
       <PageHeader kicker="Creator Studio" title="Publish & manage."
         sub="Upload reels, list products and curate your portfolio. New content is reviewed by moderators before going live." />
+
+      {needsKyc && (
+        <div className="border border-amber-400/50 bg-amber-400/5 p-4 mb-8 flex flex-wrap items-center gap-3" data-testid="kyc-banner">
+          <p className="text-sm flex-1">
+            <span className="font-display font-bold">Verification required.</span>{" "}
+            <span className="text-muted-foreground">Complete KYC to list products and receive orders. Reels and portfolio uploads stay open.</span>
+          </p>
+          <Button data-testid="kyc-banner-cta" onClick={() => navigate("/verification")} className="rounded-none font-meta text-[10px]">
+            Complete KYC
+          </Button>
+        </div>
+      )}
 
       <Tabs value={tab} onValueChange={(v) => setParams({ tab: v })}>
         <TabsList className="rounded-none mb-8">

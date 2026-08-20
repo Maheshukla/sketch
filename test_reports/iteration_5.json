@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 5 verification. Extended /app/backend/tests/backend_test.py from 67 -> 79 tests (added 12 covering retailer KYC gating, company KYC, shipping object via /orders/{id}/status, report detail+action, admin tabs + role filter, super_admin delete). Full pytest suite: 78 passed + 1 skipped (parallel xdist skip on TestShippingObject when TestCheckout consumes the placed-order seed — the same test passes when run serially, code path fully exercised there). Frontend verified on desktop 1920x1080: /reels shows reel-prev/reel-next/reel-counter (18/18) and autoscroll-toggle top-right, ArrowUp/ArrowDown key nav works (18/18 -> 17/18 -> 18/18), autoscroll toggle persists 'sketch-autoscroll'='1' in sessionStorage; on mobile 390x844 all four testids remain visible (never overlap action rail). /terms renders 'Terms of service.', /privacy renders 'Privacy policy.', /verification renders (verification-page testid) even for a customer. nav-more menu opens showing 18 role-appropriate items for a customer (Account/Orders/Wishlist/Saved/Custom Requests/Addresses/Payment history/Settings/Your Activity/Notifications/Help & Support/Report a Problem/Terms/Privacy Policy/Build your platform/Appearance/Switch account/Log out). Fresh unverified retailer (registered via API) sees kyc-banner on /studio. Admin sees all 13 tabs; the 6 new ones — retailers/companies/kyc/orders/shipping/payments — all render.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/verification/my", "issue": "public_verification masking is only applied on /verification/my — POST /verification/submit ALSO returns the masked value (good), but GET /admin/verifications returns raw docs via pub() (also good, admins should see full). Consistent, no bug — noted for documentation."},
+      {"endpoint": "POST /api/orders/{id}/ship (legacy)", "issue": "The old /ship endpoint (still used by frontend and existing TestSellerShipping test) sets order.courier + tracking_id but does NOT populate the new order.shipping{provider,shipment_id,tracking_url,shipping_charge,pickup_status,delivery_status} object. Only /orders/{id}/status action=shipped populates it. If seller UI still calls /ship, buyers won't see the tracking_url / shipment_id. Consider deprecating /ship in favor of /status action=shipped, or backfilling the shipping object in /ship too."},
+      {"endpoint": "GET /admin/reports/{id}", "issue": "previous_violations counter uses target_id: {$regex: ''} which matches ALL resolved reports (not violations by the reported user). Query should be by reported_user_id / owner_id, not the target_id regex. Currently returns global count of resolved reports."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ReelsPage", "issue": "Counter initializes at 'N/N' (18/18) instead of '1/N' on first load — IntersectionObserver reports the bottom-most reel as visible on mount (likely because reel container starts scrolled to bottom due to snap-scroll layout). ArrowUp/ArrowDown still work; not a blocker but the UX intent is 'start at reel 1'.", "selector": "[data-testid='reel-counter']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Reels (carry-over)", "issues": ["Seeded reels still use http://x/img.png placeholders → ERR_NAME_NOT_RESOLVED + Mixed-Content warnings in console (carry-over from iter_3/4)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(LOW) ReelsPage: pin currentIdx to 0 on initial mount (before IntersectionObserver first fires) so counter reads 1/N instead of N/N.",
+    "(LOW) Deprecate POST /orders/{id}/ship or make it write the full order.shipping{} object (provider/shipment_id/tracking_url/shipping_charge/pickup_status/delivery_status) so old callers benefit from the abstraction.",
+    "(LOW) Fix previous_violations count in GET /admin/reports/{id} — query by reported_user_id, not target_id: {$regex: ''}.",
+    "(LOW / carry-over) Reels placeholder media URLs still spam the console."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 2257 lines (was 1984 last iter) — split into routers (auth, catalog, orders, kyc, admin, moderation) is overdue.",
+    "ORDER_TRANSITIONS['picked_up'] maps ('shipped','shipped','seller') — it re-uses 'shipped' as both from and to state. This is fine but silently overwrites shipped_at (line 1391 sets `{to_state}_at`). Consider a distinct 'picked_up_at' timestamp on the shipping sub-doc.",
+    "public_verification masks pan/govt_id/gstin/msme/account_number/ifsc but admin GET /admin/verifications returns pub(d) with FULL values — intended, but there is no audit log of when an admin viewed unmasked KYC. Add access log for compliance.",
+    "seller_verified() runs an unindexed find_one({subject_id, status}) on every product create AND every custom-order estimate — add compound index (subject_id, status) on verifications.",
+    "review_verification updates companies.verified boolean on approve, but on subsequent 'reject/suspend' also sets companies.verified=false — good — however doesn't propagate to existing products.status (they stay approved). Consider suspending seller's active listings when KYC is revoked."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {"backend": "100% (78 passed / 1 xdist-skip, code path covered serially)", "frontend": "100% of iteration-5 acceptance criteria verified (reels arrows+counter+autoscroll on desktop+mobile, /terms, /privacy, /verification, nav-more menu, kyc-banner for unverified retailer, all 13 admin tabs incl. retailers/companies/kyc/orders/shipping/payments)"},
+  "test_credentials": "All accounts in /app/memory/test_credentials.md verified working. Used customer@sketch.app + admin@sketch.app + freshly-registered TEST_ui_ret_* for KYC banner.",
+  "seed_data_creation": "TestRetailerKYC creates one TEST_r_* retailer + a TEST_kyc_ok product; TestShippingObject may create a TEST placed order via checkout; TestAdminTabs creates + super-deletes a TEST_del_* customer; TestReportDetailAction creates a TEST_rep_reel + report. Cleanup executed post-run: TEST_ users/products/reels/reports/orders/custom_requests/verifications deleted, TEST_widget stock reset to 100, login_attempts cleared.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regression suite is /app/backend/tests/backend_test.py — 79 tests (67 legacy + 12 iter-5). Under xdist -n 2 loadscope the shipping/checkout tests can race for TEST_widget stock — reseed stock=100 OR run `-n 0` for a guaranteed-green pass. New Iter5 test classes: TestRetailerKYC, TestCompanyKYC, TestShippingObject, TestReportDetailAction, TestAdminTabs. Iter5 UI testids confirmed working: reel-prev/reel-next/reel-counter/autoscroll-toggle, kyc-banner, verification-page, nav-more + more-* items, admin-tab-{retailers,companies,kyc,orders,shipping,payments}. Known low-priority carry-over: reels counter shows N/N on first mount (should be 1/N).",
+  "rca_of_the_issue": "N/A — no new critical bugs. Three LOW findings: (a) reels counter initial state N/N due to IntersectionObserver firing on the last-visible element under snap layout — main-agent should initialise setCurrentIdx(0) after reels first load and skip the observer's setState until after user actually scrolls; (b) legacy /orders/{id}/ship does not populate the new order.shipping{} envelope — decision needed to deprecate vs. backfill; (c) previous_violations counter uses a non-scoped regex on target_id."
+}

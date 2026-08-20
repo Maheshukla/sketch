@@ -11,7 +11,25 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader, EmptyState } from "@/components/cards";
 
+function VerificationLine() {
+  const [verifs, setVerifs] = useState([]);
+  const navigate = useNavigate();
+  useEffect(() => {
+    api.get("/verification/my").then((r) => setVerifs(r.data)).catch(() => {});
+  }, []);
+  const cv = verifs.find((v) => v.subject_type === "company");
+  return (
+    <button data-testid="company-kyc-status" onClick={() => navigate("/verification")}
+      className="mb-8 border border-border/60 px-4 py-3 flex items-center gap-3 hover:border-foreground/40 transition-colors w-full text-left">
+      <span className={`h-2 w-2 rounded-full ${cv?.status === "approved" ? "bg-emerald-500" : "bg-amber-400"}`} />
+      <span className="text-sm">Company verification: <span className="font-display font-bold">{cv?.status?.replace("_", " ") || "not started"}</span></span>
+      <span className="font-meta text-[9px] text-primary ml-auto">Manage →</span>
+    </button>
+  );
+}
+
 export default function CompanyPage() {
+
   const { user, refresh } = useAuth();
   const navigate = useNavigate();
   const [company, setCompany] = useState(undefined);
@@ -92,6 +110,8 @@ export default function CompanyPage() {
   return (
     <div className="max-w-[1000px] mx-auto px-4 sm:px-8 py-12" data-testid="company-page">
       <PageHeader kicker="Company" title={company.name} sub={company.description} />
+
+      <VerificationLine />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-10" data-testid="company-quicklinks">
         {[

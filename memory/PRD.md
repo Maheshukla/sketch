@@ -68,6 +68,16 @@ A SaaS platform combining Instagram (reels/social), Behance (portfolios), Etsy (
 - Badges: auth/me returns cart_count, wishlist_count, unread_notifications, message_count; navbar + mobile menu badges
 - Testing: iteration_4 — 67/67 backend tests pass (suite extended: enquiries, default addresses, auth/me counters); both reported UI bugs verified fixed by testing agent on desktop + mobile; follow-up fixes applied: ₹NaN budget guard, enquiry rate limit (20/hr/IP) + admin notifications + resolved_by/resolved_at audit, login_attempts TTL index
 
+## Iteration 5 — Reels UX + KYC + shipping abstraction + admin depth (2026-08-20)
+- Reels: prev/next arrow buttons (top-right cluster, never overlap content/rail), keyboard ArrowUp/Down navigation, 1/N counter, auto-scroll toggle (session-persisted, OFF by default; videos advance onEnded, images after 8s fallback), snap scrolling preserved
+- KYC/verification: verifications collection (draft/submitted/under_review/approved/rejected/more_info/suspended), retailer + company submission with draft save, masked display for users (PAN/GSTIN/Aadhaar masked), admins see full; product listing + company estimate gated on approved verification; seeded retailer + company grandfathered approved
+- Shipping provider abstraction: order.shipping {provider, shipment_id, tracking_number, pickup_status, shipping_charge, delivery_status, tracking_url}; per-courier rate card; picked_up transition
+- Reports: full detail modal (reporter, reported user, content preview, related reports, notes), status workflow (under_review/resolved/rejected/escalated), moderation actions (remove/restrict content, warn/suspend user), internal notes
+- Admin panel: 13 tabs — added retailers, companies, KYC queue (filters + review + notes), orders, shipping, payments; users role filter + verify toggle + super-admin delete
+- More menu (Instagram-style, role-based sections) + mobile menu Help/Terms/Privacy/Switch Account; Terms + Privacy static pages
+- White-mode readability: darker muted text (25%), stronger borders (85%), font-meta weight 600
+- Testing: iteration_5 — 79/79 backend tests pass on clean serial run (78 passed + 1 xdist-skip under parallel load); all UI acceptance criteria verified by testing agent; follow-ups fixed: reels counter pins to 1/N (fresh-load scroll pin + dominant-entry observer), legacy /ship backfills shipping object, previous_violations scoped to reported user, KYC revoke suspends listings, picked_up timestamp, verifications compound index, KYC admin access logs
+
 ## Backlog
 - P0: Real Razorpay + webhook verification; real SMS OTP provider
 - P1: Balance payment for advance-paid custom orders; refunds/disputes flow; live chat; reel video transcoding; saved-reels page; sales analytics aggregation pipeline
